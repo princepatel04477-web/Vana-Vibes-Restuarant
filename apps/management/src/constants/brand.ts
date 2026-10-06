@@ -46,3 +46,16 @@ export const CAFE_BRAND: CafeDetails & {
       .join(' • '),
   },
 };
+
+export const CafeBrand = {
+  id: process.env.NEXT_PUBLIC_CAFE_ID || 'van-vibes',
+  name: process.env.NEXT_PUBLIC_APP_NAME || 'Vaan Vibes Cafe & Restro',
+  hindiName: process.env.NEXT_PUBLIC_CAFE_HINDI_NAME || 'वन VIBES',
+  tagline: process.env.NEXT_PUBLIC_APP_TAGLINE || '',
+  address: process.env.NEXT_PUBLIC_CAFE_ADDRESS || 'Titanium The Business Hub, G-17, Bhimrad Rd, opp. Aakash Empire, beside White Temple, Surat, Gujarat 395007',
+  phone: process.env.NEXT_PUBLIC_CAFE_PHONE || '+91 9904990790',
+  email: process.env.NEXT_PUBLIC_CAFE_EMAIL || '',
+  gstin: process.env.NEXT_PUBLIC_CAFE_GSTIN || '24ABCDE1234F1Z5',
+  currency: process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || '₹',
+  operatingHours: cafeHours,
+};
