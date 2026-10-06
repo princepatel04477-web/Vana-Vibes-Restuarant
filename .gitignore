@@ -42,3 +42,6 @@ logs/
 # typescript build info
 *.tsbuildinfo
 next-env.d.ts
+
+.vercel
+.env*
