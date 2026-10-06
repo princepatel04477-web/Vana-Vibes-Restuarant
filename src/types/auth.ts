@@ -8,6 +8,9 @@ export interface User {
   avatar?: string;
   shift?: string;
   assignedStation?: string;
+  assigned_station?: string;
+  is_active?: boolean;
+  isActive?: boolean;
 }
 
 export interface AuthState {

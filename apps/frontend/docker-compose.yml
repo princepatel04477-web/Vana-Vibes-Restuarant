@@ -1,0 +1,43 @@
+# ==============================================================================
+# Production Docker Compose
+# Service: Next.js 16 Standalone Web Application (Port 4000)
+# All environment variables are loaded directly from .env.example (with .env.local overrides).
+# ==============================================================================
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: van_vibes_frontend
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env.example
+      - path: .env.local
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      FASTAPI_BACKEND_URL: ${FASTAPI_BACKEND_URL:-http://backend:9000}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:9000/api/v1}
+      UV_THREADPOOL_SIZE: 64
+      NODE_OPTIONS: "--max-old-space-size=2048"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    networks:
+      - van_vibes_network
+
+networks:
+  van_vibes_network:
+    name: van_vibes_network
+    driver: bridge

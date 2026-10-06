@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { OrderCard } from '@/components/orders/OrderCard';
 import { BillModal } from '@/components/billing/BillModal';
@@ -16,6 +17,7 @@ import {
   Search,
   Filter,
   Calendar,
+  Coffee,
 } from 'lucide-react';
 
 export type DateRangeOption = 'today' | 'yesterday' | '30_days' | 'month' | 'year';
@@ -181,8 +183,38 @@ export default function AdminDashboardPage() {
             </p>
           </div>
 
-          {/* Date Filter Dropdown */}
-          <div className="flex items-center gap-2">
+          {/* Actions & Filters */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link
+              href="/kot"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand-gold text-brand-green hover:bg-brand-gold-light border border-brand-gold-dark text-xs font-black shadow-2xs transition-all active:scale-95"
+              title="View Real-Time Barista KOT Tickets (Beverages & Desserts)"
+            >
+              <Coffee className="w-3.5 h-3.5 shrink-0" />
+              <span>KOT (Drinks)</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-700 animate-pulse" />
+            </Link>
+
+            <Link
+              href="/chef"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand-green text-brand-beige hover:bg-brand-green-surface border border-brand-gold/40 text-xs font-black shadow-2xs transition-all active:scale-95"
+              title="View Real-Time Kitchen Display System (Food Orders)"
+            >
+              <ChefHat className="w-3.5 h-3.5 text-brand-gold shrink-0" />
+              <span>Kitchen KDS</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            </Link>
+
+            <Link
+              href="/staff"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-brand-beige border border-brand-beige-dark text-xs font-bold text-brand-green shadow-2xs transition-all active:scale-95"
+              title="Manage Staff, Shifts & Kitchen Chefs"
+            >
+              <Users className="w-3.5 h-3.5 text-brand-green/70 shrink-0" />
+              <span>Chef Management</span>
+            </Link>
+
+            {/* Date Filter Dropdown */}
             <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-brand-beige/40 border border-brand-beige-dark text-xs font-bold text-brand-green shadow-2xs transition-all">
               <Calendar className="w-3.5 h-3.5 text-brand-green/60 shrink-0" />
               <span className="text-[11px] text-brand-green/60 font-semibold hidden xs:inline">Date Range:</span>
@@ -216,17 +248,26 @@ export default function AdminDashboardPage() {
             <p className="text-[11px] text-brand-green/60">{getRangeLabel()} tickets</p>
           </div>
 
-          {/* Kitchen Pending */}
-          <div className="p-4 rounded-2xl bg-white border border-brand-beige-dark shadow-xs space-y-1">
+          {/* Kitchen Pending (Interactive Link to KOT Live) */}
+          <Link
+            href="/chef"
+            className="p-4 rounded-2xl bg-white hover:bg-amber-50/50 border border-brand-beige-dark hover:border-amber-400 shadow-xs space-y-1 transition-all group block cursor-pointer"
+            title="Open Live Kitchen Order Tickets (KOT)"
+          >
             <div className="flex items-center justify-between text-amber-800">
-              <span className="text-[10px] uppercase font-black tracking-wider">Kitchen Pending</span>
-              <ChefHat className="w-4 h-4 text-amber-600" />
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase font-black tracking-wider">KOT Live Pending</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+              </div>
+              <ChefHat className="w-4 h-4 text-amber-600 group-hover:scale-110 transition-transform" />
             </div>
             <p className="text-2xl sm:text-3xl font-black text-amber-700 font-mono">
               {kitchenPending}
             </p>
-            <p className="text-[11px] text-amber-900/60">Requires preparation</p>
-          </div>
+            <p className="text-[11px] text-amber-900/70 font-semibold group-hover:underline">
+              Open Live KOT Tickets &rarr;
+            </p>
+          </Link>
 
           {/* Occupied Tables */}
           <div className="p-4 rounded-2xl bg-white border border-brand-beige-dark shadow-xs space-y-1">

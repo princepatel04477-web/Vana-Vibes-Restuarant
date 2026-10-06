@@ -62,6 +62,15 @@ export function CafeHeader() {
             </button>
           )}
 
+          {/* Staff Portal Link */}
+          <Link
+            href="/dashboard"
+            className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-brand-green-light hover:bg-brand-green-surface text-brand-beige-muted hover:text-brand-beige text-xs font-semibold border border-brand-green-light hover:border-brand-gold/40 transition-all shrink-0 min-h-[36px]"
+            title="Restaurant Staff & Admin Portal"
+          >
+            <span>Staff Portal</span>
+          </Link>
+
           {/* Quick Search Trigger Button */}
           <button
             type="button"

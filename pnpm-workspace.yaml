@@ -1,4 +1,10 @@
+packages:
+  - "apps/*"
+
 allowBuilds:
   unrs-resolver: true
   "@tailwindcss/oxide": true
   sharp: true
+
+minimumReleaseAgeExclude:
+  - vite@8.3.3

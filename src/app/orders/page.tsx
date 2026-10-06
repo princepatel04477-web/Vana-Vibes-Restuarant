@@ -8,7 +8,8 @@ import { Order, OrderStatus } from '@/types/cafe';
 import { ordersApi } from '@/api/orders';
 import { wsManager } from '@/services/websocket/WebSocketManager';
 import { useAuth } from '@/context/AuthContext';
-import { Search, RefreshCw, ShoppingBag } from 'lucide-react';
+import Link from 'next/link';
+import { Search, RefreshCw, ShoppingBag, ChefHat, Coffee } from 'lucide-react';
 
 export default function OrdersPage() {
   const { role } = useAuth();
@@ -129,15 +130,37 @@ export default function OrdersPage() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={loadOrders}
-            disabled={isRefreshing}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-brand-beige border border-brand-beige-dark text-xs font-bold text-brand-green shadow-2xs transition-all active:scale-95 disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link
+              href="/kot"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand-gold text-brand-green hover:bg-brand-gold-light border border-brand-gold-dark text-xs font-black shadow-xs transition-all active:scale-95"
+              title="Open Barista KOT Ticket Screen (Drinks & Desserts)"
+            >
+              <Coffee className="w-4 h-4 shrink-0" />
+              <span>KOT (Drinks)</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-700 animate-pulse" />
+            </Link>
+
+            <Link
+              href="/chef"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand-green text-brand-beige hover:bg-brand-green-surface border border-brand-gold/40 text-xs font-black shadow-xs transition-all active:scale-95"
+              title="Open Kitchen KDS Display (Food Orders)"
+            >
+              <ChefHat className="w-4 h-4 text-brand-gold shrink-0" />
+              <span>Kitchen KDS</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            </Link>
+
+            <button
+              type="button"
+              onClick={loadOrders}
+              disabled={isRefreshing}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-brand-beige border border-brand-beige-dark text-xs font-bold text-brand-green shadow-2xs transition-all active:scale-95 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
+            </button>
+          </div>
         </div>
 
         {/* Filter Toolbar */}

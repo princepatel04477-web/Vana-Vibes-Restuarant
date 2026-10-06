@@ -30,10 +30,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const token = localStorage.getItem('vv_mgmt_token');
         if (token) {
-          const profile = await authApi.getMe();
-          const avatar = profile.role === 'ADMIN' ? '👨‍💼' : '👨‍🍳';
-          setUser({ ...profile, avatar });
-          wsManager.connect(token);
+          const rawProfile: any = await authApi.getMe();
+          const profile = rawProfile?.data || rawProfile;
+          if (profile && profile.role) {
+            const avatar = profile.role === 'ADMIN' ? '👨‍💼' : '👨‍🍳';
+            setUser({
+              ...profile,
+              role: profile.role as UserRole,
+              assignedStation: profile.assignedStation || profile.assigned_station,
+              avatar,
+            });
+            wsManager.connect(token);
+          }
         }
       } catch {
         localStorage.removeItem('vv_mgmt_token');
@@ -49,21 +57,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(
     async (email: string, pass: string): Promise<{ success: boolean; error?: string }> => {
       try {
-        const res = await authApi.login(email.trim(), pass);
-        const avatar = res.user.role === 'ADMIN' ? '👨‍💼' : '👨‍🍳';
+        const res: any = await authApi.login(email.trim(), pass);
+        const loginData = res?.data || res;
+        const user = loginData?.user || loginData;
+        const token = loginData?.access_token || res?.access_token;
+
+        if (!user || !user.role) {
+          throw new Error('Authentication response did not contain user credentials.');
+        }
+
+        const avatar = user.role === 'ADMIN' ? '👨‍💼' : '👨‍🍳';
         const userObj: User = {
-          id: res.user.id,
-          name: res.user.name,
-          email: res.user.email,
-          role: res.user.role as UserRole,
-          shift: res.user.shift || (res.user.role === 'ADMIN' ? 'Morning & Evening' : 'Kitchen Main Shift'),
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role as UserRole,
+          shift: user.shift || (user.role === 'ADMIN' ? 'Morning & Evening' : 'Kitchen Main Shift'),
           assignedStation:
-            res.user.assignedStation ||
-            (res.user.role === 'ADMIN' ? 'Operations & Management' : 'Head Chef (Hot Line & Espresso)'),
+            user.assignedStation ||
+            user.assigned_station ||
+            (user.role === 'ADMIN' ? 'Operations & Management' : 'Head Chef (Hot Line & Espresso)'),
           avatar,
         };
 
-        localStorage.setItem('vv_mgmt_token', res.access_token);
+        if (token) {
+          localStorage.setItem('vv_mgmt_token', token);
+          wsManager.connect(token);
+        }
         localStorage.setItem(
           'vv_mgmt_auth',
           JSON.stringify({
@@ -74,7 +94,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         );
 
         setUser(userObj);
-        wsManager.connect(res.access_token);
 
         // Redirect based on authoritative role
         if (userObj.role === 'CHEF') {

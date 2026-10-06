@@ -1,23 +1,30 @@
 {
-  "name": "cosmosnexusinnovations-frontend",
-  "version": "0.1.0",
+  "name": "vaan-vibes-restaurant-fullstack",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "prepare": "git config core.hooksPath .githooks || true"
+    "dev": "node start-fullstack.js",
+    "dev:backend": "backend\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 9000 --reload",
+    "dev:frontend": "pnpm --filter van-vibes-frontend dev",
+    "dev:management": "pnpm --filter vaan-vibes-management dev",
+    "seed:backend": "backend\\.venv\\Scripts\\python.exe backend/manage.py seed",
+    "typecheck:frontend": "pnpm --filter van-vibes-frontend typecheck",
+    "typecheck:management": "pnpm --filter vaan-vibes-management typecheck",
+    "typecheck": "pnpm typecheck:frontend && pnpm typecheck:management",
+    "lint:frontend": "pnpm --filter van-vibes-frontend lint",
+    "lint:management": "pnpm --filter vaan-vibes-management lint",
+    "lint": "pnpm lint:frontend && pnpm lint:management",
+    "test:backend": "backend\\.venv\\Scripts\\pytest.exe backend/tests",
+    "test:frontend": "pnpm --filter van-vibes-frontend test",
+    "test:management": "pnpm --filter vaan-vibes-management test",
+    "test": "pnpm test:frontend && pnpm test:management"
   },
   "dependencies": {
     "@types/canvas-confetti": "^1.9.0",
     "@types/three": "^0.186.0",
     "canvas-confetti": "^1.9.4",
     "clsx": "^2.1.1",
-    "lucide-react": "^1.39.0",
+    "lucide-react": "^1.48.0",
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -26,7 +33,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.1.1",
@@ -34,7 +41,7 @@
     "eslint-config-next": "16.3.4",
     "tailwindcss": "^4",
     "typescript": "^5",
+    "vite": "^8.3.3",
     "vitest": "^5.0.0"
-  },
-  "packageManager": "pnpm@11.25.0"
+  }
 }

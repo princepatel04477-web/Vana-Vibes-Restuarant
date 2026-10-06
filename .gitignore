@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 *.zip
+*.db
+.venv/
+backend/.venv/
 
 # debug & logs
 npm-debug.log*

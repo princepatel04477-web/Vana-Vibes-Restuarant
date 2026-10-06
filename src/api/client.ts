@@ -49,11 +49,17 @@ export async function apiClient<T>(
 
   if (!response.ok) {
     const errorMsg =
+      (Array.isArray(json?.errors) && json.errors.length > 0 ? json.errors.join(', ') : null) ||
       json?.detail ||
       json?.message ||
       json?.error ||
       `HTTP error ${response.status}: ${response.statusText}`;
     throw new Error(errorMsg);
+  }
+
+  // If backend standard response envelope exists, unwrap `data`
+  if (json && typeof json === 'object' && 'data' in json && 'success' in json) {
+    return json.data as T;
   }
 
   return json as T;

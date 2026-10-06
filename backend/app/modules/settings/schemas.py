@@ -1,0 +1,34 @@
+from typing import Optional
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class CafeSettingsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, from_attributes=True)
+
+    id: str = "van-vibes"
+    name: str = Field("Vaan Vibes Cafe & Restro")
+    hindi_name: str = Field("वन VIBES", alias="hindiName")
+    tagline: str = "Cafe & Restro • Taste the Vibe"
+    address: str
+    phone: str
+    gstin: str = ""
+    currency: str = "₹"
+    tax_rate: float = Field(0.05, alias="taxRate")
+    upi_id: Optional[str] = Field("9773291261@okbizaxis", alias="upiId")
+    upi_payee_name: Optional[str] = Field("OM DIYORA", alias="upiPayeeName")
+    payment_qr_code: Optional[str] = Field(None, alias="paymentQrCode")
+
+
+class CafeSettingsUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: Optional[str] = None
+    hindi_name: Optional[str] = Field(None, alias="hindiName")
+    tagline: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    gstin: Optional[str] = None
+    tax_rate: Optional[float] = Field(None, alias="taxRate")
+    upi_id: Optional[str] = Field(None, alias="upiId")
+    upi_payee_name: Optional[str] = Field(None, alias="upiPayeeName")
+    payment_qr_code: Optional[str] = Field(None, alias="paymentQrCode")

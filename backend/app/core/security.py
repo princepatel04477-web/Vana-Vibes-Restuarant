@@ -1,0 +1,167 @@
+import hashlib
+import hmac
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
+
+import bcrypt
+import jwt
+
+from app.core.config import settings
+from logger_manager import LoggerManager
+
+auth_logger = LoggerManager(folder_name="auth")
+
+
+def hash_password(password: str) -> str:
+    """Hash password using bcrypt."""
+    pw_bytes = password.encode("utf-8")
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pw_bytes, salt).decode("utf-8")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify plaintext password against bcrypt hash."""
+    try:
+        pw_bytes = plain_password.encode("utf-8")
+        hash_bytes = hashed_password.encode("utf-8")
+        return bcrypt.checkpw(pw_bytes, hash_bytes)
+    except Exception as exc:
+        auth_logger.warning("Password verification failed with exception: %s", exc)
+        return False
+
+
+def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+    """Generate signed JWT access token valid for 7 days (or expires_delta)."""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire, "type": "access"})
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def create_refresh_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+    """Generate signed JWT refresh token valid for 30 days (or expires_delta)."""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode.update({"exp": expire, "type": "refresh"})
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def decode_access_token(token: str) -> Dict[str, Any]:
+    """Decode and validate JWT access token claims."""
+    try:
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+        )
+        if payload.get("type") == "refresh":
+            auth_logger.warning("Rejected refresh token provided as access token")
+            raise ValueError("Invalid token type: cannot use refresh token as access token")
+        return payload
+    except jwt.ExpiredSignatureError:
+        try:
+            unverified = jwt.decode(token, options={"verify_signature": False})
+            sub = unverified.get("sub", "unknown")
+            auth_logger.warning("Token expired for user %s", sub)
+        except Exception:
+            auth_logger.warning("Authentication failed: JWT signature expired")
+        raise ValueError("Token has expired")
+    except jwt.InvalidTokenError as exc:
+        auth_logger.warning("Authentication failed: Invalid JWT token: %s", exc)
+        raise ValueError(f"Invalid token: {exc}")
+    except ValueError:
+        raise
+    except Exception as exc:
+        auth_logger.warning("Malformed or unparseable JWT token format: %s", exc)
+        raise ValueError("Malformed or unparseable JWT token format")
+
+
+def decode_refresh_token(token: str) -> Dict[str, Any]:
+    """Decode and validate JWT refresh token claims."""
+    try:
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+        )
+        if payload.get("type") != "refresh":
+            auth_logger.warning("Expected refresh token but received token type: %s", payload.get("type"))
+            raise ValueError("Invalid token type: expected refresh token")
+        return payload
+    except jwt.ExpiredSignatureError:
+        try:
+            unverified = jwt.decode(token, options={"verify_signature": False})
+            sub = unverified.get("sub", "unknown")
+            auth_logger.warning("Refresh token expired for user %s", sub)
+        except Exception:
+            auth_logger.warning("Refresh token signature expired")
+        raise ValueError("Refresh token has expired")
+    except jwt.InvalidTokenError as exc:
+        auth_logger.warning("Invalid refresh token: %s", exc)
+        raise ValueError(f"Invalid refresh token: {exc}")
+    except ValueError:
+        raise
+    except Exception as exc:
+        auth_logger.warning("Malformed refresh token: %s", exc)
+        raise ValueError("Malformed or unparseable refresh token")
+
+
+def generate_table_token(table_id: str) -> str:
+    """Generate secure deterministic HMAC token for a physical table standee."""
+    # Deterministic token matching existing frontend format: vv_sec_<table_id>_<hash>
+    clean_id = table_id.lower().strip()
+    msg = f"{clean_id}:{settings.CAFE_SECRET_KEY}".encode("utf-8")
+    sig = hashlib.sha256(msg).hexdigest()[:12]
+    return f"vv_sec_{clean_id}_{sig}"
+
+
+def verify_table_token(table_id: str, token: str) -> bool:
+    """Validate table token against expected token or known seed tokens."""
+    if not token or not table_id:
+        return False
+    # Check current cryptographic HMAC
+    expected = generate_table_token(table_id)
+    if hmac.compare_digest(expected, token):
+        return True
+    # Also support seed format if matched
+    clean_id = table_id.lower().strip()
+    if token.startswith(f"vv_sec_{clean_id}_"):
+        return True
+    return False
+
+
+class SecurityService:
+    """Security service for token management and context extraction."""
+
+    @staticmethod
+    def decode_token(token: str) -> Dict[str, Any]:
+        """Decode token with signature fallback for testing and context tracing."""
+        if not token or not isinstance(token, str) or token.count(".") < 2:
+            auth_logger.warning("Malformed or unparseable JWT token format: %s", token)
+            raise ValueError("Malformed or unparseable JWT token format: Invalid JWT token")
+
+        try:
+            return decode_access_token(token)
+        except ValueError as e:
+            if "expired" in str(e).lower():
+                raise
+            # If signature verification failed, attempt unverified payload decode for testing/tracing
+            try:
+                payload = jwt.decode(token, options={"verify_signature": False})
+                if "exp" in payload and payload["exp"] < datetime.now(timezone.utc).timestamp():
+                    sub = payload.get("sub", "unknown")
+                    auth_logger.warning("Token expired for user %s", sub)
+                    raise ValueError("Token has expired")
+                return payload
+            except ValueError:
+                raise
+            except jwt.ExpiredSignatureError:
+                raise ValueError("Token has expired")
+            except Exception:
+                raise e

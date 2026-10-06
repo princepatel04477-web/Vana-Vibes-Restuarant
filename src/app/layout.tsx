@@ -3,6 +3,7 @@ import localFont from 'next/font/local';
 import './globals.css';
 import { SiteConfig } from '@/data/site-config';
 import { CartProvider } from '@/context/CartContext';
+import { AuthProvider } from '@/context/AuthContext';
 
 const generalSans = localFont({
   src: [
@@ -58,14 +59,16 @@ export default function RootLayout({
     <html
       lang="en"
       className={`h-full scroll-smooth ${generalSans.variable}`}
+      data-scroll-behavior="smooth"
       suppressHydrationWarning
     >
       <body className="min-h-full w-full flex flex-col font-sans bg-brand-beige-light text-brand-green antialiased" suppressHydrationWarning>
-        <CartProvider>
-          {children}
-        </CartProvider>
+        <AuthProvider>
+          <CartProvider>
+            {children}
+          </CartProvider>
+        </AuthProvider>
       </body>
     </html>
   );
 }
-

@@ -1,0 +1,162 @@
+name: Frontend CI/CD — Van Vibes Cafe & Restro
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Stage 1: Continuous Integration & Quality Gate
+  # ----------------------------------------------------------------------------
+  ci-quality-gate:
+    name: Lint, Typecheck, Tests & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm Package Manager
+        uses: pnpm/action-setup@v3
+        with:
+          version: 11.25.0
+
+      - name: Setup Node.js Runtime (v22 LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Code Quality & Linting (ESLint)
+        run: pnpm lint
+
+      - name: Strict TypeScript Compilation (tsc --noEmit)
+        run: pnpm typecheck
+
+      - name: Continuous Testing (Vitest Suite)
+        run: pnpm test
+
+      - name: Next.js Production Build (Turbopack)
+        run: pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+          NODE_ENV: production
+          NEXT_PUBLIC_APP_NAME: "Van Vibes Cafe & Restro"
+          NEXT_PUBLIC_APP_URL: "https://vaanvibes.cafe"
+          NEXT_PUBLIC_API_URL: "https://api.vaanvibes.cafe/api/v1"
+
+  # ----------------------------------------------------------------------------
+  # Stage 2: Container Image Build & Health Verification
+  # ----------------------------------------------------------------------------
+  docker-build-verification:
+    name: Docker Image Build Test
+    needs: ci-quality-gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Container Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: van-vibes-frontend:test
+          build-args: |
+            NEXT_PUBLIC_APP_NAME=Van Vibes Cafe & Restro
+            NEXT_PUBLIC_APP_URL=http://localhost:3000
+
+  # ----------------------------------------------------------------------------
+  # Stage 3: Automated Deployment (Production Server)
+  # ----------------------------------------------------------------------------
+  cd-deploy-production:
+    name: Deploy to Production Server
+    needs: [ci-quality-gate, docker-build-verification]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Production Deployment Secrets
+        id: check-secrets
+        run: |
+          if [ -n "${{ secrets.PROD_HOST }}" ] && [ -n "${{ secrets.PROD_SSH_KEY }}" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+          else
+            echo "configured=false" >> $GITHUB_OUTPUT
+            echo "PROD_HOST or PROD_SSH_KEY secret not configured. Skipping automated SSH deploy."
+          fi
+
+      - name: Deploy via SSH to Production
+        if: steps.check-secrets.outputs.configured == 'true'
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USERNAME: ${{ secrets.PROD_USERNAME || 'root' }}
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_PORT: ${{ secrets.PROD_SSH_PORT || 22 }}
+          DEPLOY_PATH: ${{ secrets.PROD_DEPLOY_PATH || '/var/www/van-vibes-frontend' }}
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USERNAME || 'root' }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          port: ${{ secrets.PROD_SSH_PORT || 22 }}
+          script_stop: true
+          envs: DEPLOY_PATH
+          script: |
+            echo "================================================================================"
+            echo "   DEPLOYING VAAN VIBES CAFE & RESTRO FRONTEND (Next.js 16 Production)          "
+            echo "================================================================================"
+
+            # Ensure deployment directory exists
+            if [ ! -d "$DEPLOY_PATH" ]; then
+              echo "Initializing deployment directory at $DEPLOY_PATH..."
+              mkdir -p "$DEPLOY_PATH"
+              git clone "https://github.com/${{ github.repository }}.git" "$DEPLOY_PATH"
+            fi
+
+            cd "$DEPLOY_PATH"
+            echo "Fetching latest changes from main branch..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Ensure .env.local exists
+            if [ ! -f ".env.local" ]; then
+              echo "Initializing .env.local from .env.example..."
+              cp .env.example .env.local
+            fi
+
+            echo "Rebuilding and restarting production containers..."
+            docker compose build --no-cache
+            docker compose up -d --remove-orphans
+
+            echo "Verifying service health..."
+            sleep 5
+            for i in $(seq 1 10); do
+              if curl -f http://localhost:3000/api/health >/dev/null 2>&1; then
+                echo "✓ Next.js production container is healthy and operational!"
+                break
+              fi
+              echo "Health probe $i/10 failed, retrying in 3s..."
+              sleep 3
+            done
+
+            echo "Cleaning dangling build images..."
+            docker image prune -f
+
+            echo "✓ DEPLOYMENT COMPLETED SUCCESSFULLY!"

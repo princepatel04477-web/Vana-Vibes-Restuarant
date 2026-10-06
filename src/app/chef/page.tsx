@@ -1,20 +1,21 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { OrderCard } from '@/components/orders/OrderCard';
+import { StationTicketCard } from '@/components/orders/StationTicketCard';
 import { Order, OrderStatus } from '@/types/cafe';
 import { ordersApi } from '@/api/orders';
 import { wsManager } from '@/services/websocket/WebSocketManager';
+import { isFoodItem } from '@/lib/order-classification';
 import {
   ChefHat,
   Bell,
   BellOff,
-  Clock,
+  Calendar,
+  Search,
   Sparkles,
-  CheckCircle2,
   RefreshCw,
-  Send,
+  Clock,
   Flame,
 } from 'lucide-react';
 
@@ -23,6 +24,7 @@ export default function ChefKDSPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [chimeEnabled, setChimeEnabled] = useState(true);
   const [activeTab, setActiveTab] = useState<'live' | 'completed'>('live');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const playKitchenChime = useCallback(() => {
     if (!chimeEnabled || typeof window === 'undefined') return;
@@ -40,7 +42,7 @@ export default function ChefKDSPage() {
       osc.start();
       osc.stop(ctx.currentTime + 0.6);
     } catch {
-      // Audio context might be restricted before user gesture
+      // Audio context might be restricted before gesture
     }
   }, [chimeEnabled]);
 
@@ -70,7 +72,13 @@ export default function ChefKDSPage() {
     const unsubPlaced = wsManager.on('ORDER_PLACED', handleNewOrder);
     const unsubCreated = wsManager.on('ORDER_CREATED', handleNewOrder);
 
-    const handleStatusTransition = (data: { orderId?: string; order_id?: string; status: OrderStatus; updatedAt?: string; updated_at?: string }) => {
+    const handleStatusTransition = (data: {
+      orderId?: string;
+      order_id?: string;
+      status: OrderStatus;
+      updatedAt?: string;
+      updated_at?: string;
+    }) => {
       const id = data.orderId || data.order_id;
       const st = data.status;
       const upd = data.updatedAt || data.updated_at || new Date().toISOString();
@@ -97,42 +105,69 @@ export default function ChefKDSPage() {
     };
   }, [loadOrders, playKitchenChime]);
 
-  const handleUpdateStatus = async (orderId: string, nextStatus: OrderStatus) => {
+  const handleMarkDone = async (orderId: string) => {
     try {
-      if (nextStatus === 'ACCEPTED') {
-        await ordersApi.acceptOrder(orderId);
-      } else if (nextStatus === 'COMPLETED' || nextStatus === 'SERVED') {
+      await ordersApi.updateStatus(orderId, 'SERVED');
+    } catch {
+      try {
         await ordersApi.completeOrder(orderId);
-      } else {
-        await ordersApi.updateStatus(orderId, nextStatus);
+      } catch (e) {
+        console.error('Failed to mark food order done:', e);
       }
-    } catch (err) {
-      console.error('Failed to update status on backend:', err);
     }
     loadOrders();
   };
 
-  // Group kitchen orders into sequential stages
-  const placedOrders = orders.filter((o) => o.status === 'PLACED' || o.status === 'ORDER_PLACED');
-  const acceptedOrders = orders.filter((o) => o.status === 'ACCEPTED' || o.status === 'SERVED');
-  const completedOrders = orders.filter((o) => o.status === 'COMPLETED');
+  // Filter orders containing FOOD items strictly
+  const foodOrders = useMemo(() => {
+    return orders
+      .map((order) => {
+        const foodItems = order.items.filter((item) => isFoodItem(item));
+        return {
+          ...order,
+          items: foodItems,
+        };
+      })
+      .filter((order) => order.items.length > 0);
+  }, [orders]);
+
+  // Separate incoming/live vs completed
+  const pendingFoodTickets = foodOrders.filter(
+    (o) => o.status === 'PLACED' || o.status === 'ORDER_PLACED' || o.status === 'ACCEPTED'
+  );
+  const completedFoodTickets = foodOrders.filter(
+    (o) => o.status === 'SERVED' || o.status === 'COMPLETED'
+  );
+
+  const displayedFoodTickets = (
+    activeTab === 'live' ? pendingFoodTickets : completedFoodTickets
+  ).filter((o) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      o.id.toLowerCase().includes(q) ||
+      `table ${o.tableNumber}`.toLowerCase().includes(q) ||
+      (o.customerName && o.customerName.toLowerCase().includes(q)) ||
+      o.items.some((i) => i.name.toLowerCase().includes(q))
+    );
+  });
 
   return (
     <AppLayout requiredRole="CHEF">
       <div className="space-y-6">
-        {/* Chef KDS Header Strip */}
-        <div className="p-4 sm:p-5 rounded-2xl bg-brand-green text-brand-beige shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        {/* Banner Strip (Matches User Screenshot 2: Kitchen Display System KDS LIVE PREP) */}
+        <div className="p-4 sm:p-5 rounded-2xl bg-brand-green text-brand-beige shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-brand-gold text-brand-green font-black flex items-center justify-center text-lg shadow-sm">
+            <div className="w-11 h-11 rounded-2xl bg-brand-gold text-brand-green flex items-center justify-center text-xl font-black shadow-xs shrink-0">
               <ChefHat className="w-6 h-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-lg sm:text-xl font-black tracking-tight text-brand-beige">
                   Kitchen Display System (KDS)
                 </h1>
-                <span className="text-[10px] uppercase font-bold tracking-widest px-2 py-0.5 rounded bg-brand-gold text-brand-green">
-                  Live Prep
+                <span className="text-[10px] uppercase font-black tracking-wider px-2.5 py-0.5 rounded-full bg-brand-gold text-brand-green">
+                  LIVE PREP
                 </span>
               </div>
               <p className="text-xs text-brand-beige-muted mt-0.5">
@@ -141,7 +176,12 @@ export default function ChefKDSPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap self-end md:self-auto">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-brand-green-light text-brand-beige text-xs font-bold border border-brand-green-light">
+              <Calendar className="w-3.5 h-3.5 text-brand-gold" />
+              <span>Today</span>
+            </div>
+
             <button
               type="button"
               onClick={() => setChimeEnabled(!chimeEnabled)}
@@ -152,147 +192,105 @@ export default function ChefKDSPage() {
               }`}
             >
               {chimeEnabled ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
-              <span>{chimeEnabled ? 'Order Sound ON' : 'Muted'}</span>
+              <span>{chimeEnabled ? 'Chime ON' : 'Muted'}</span>
             </button>
 
             <button
               type="button"
               onClick={loadOrders}
               disabled={isRefreshing}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-brand-green-light hover:bg-brand-green-hover text-brand-beige text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-brand-green-light hover:bg-brand-green-surface text-brand-beige text-xs font-bold transition-all cursor-pointer"
+              title="Refresh Kitchen Orders"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-              <span>Refresh</span>
             </button>
           </div>
         </div>
 
-        {/* View Switcher: Live Active Pipeline vs Completed History */}
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setActiveTab('live')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'live'
-                ? 'bg-brand-green text-brand-beige shadow-xs'
-                : 'bg-white text-brand-green/70 hover:bg-brand-beige border border-brand-beige-dark'
-            }`}
-          >
-            Live Kitchen Pipeline ({placedOrders.length + acceptedOrders.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('completed')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              activeTab === 'completed'
-                ? 'bg-brand-green text-brand-beige shadow-xs'
-                : 'bg-white text-brand-green/70 hover:bg-brand-beige border border-brand-beige-dark'
-            }`}
-          >
-            Completed Tickets ({completedOrders.length})
-          </button>
+        {/* Tab & Search Toolbar */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('live')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeTab === 'live'
+                  ? 'bg-brand-green text-brand-beige shadow-xs'
+                  : 'bg-white text-brand-green/70 hover:bg-brand-beige border border-brand-beige-dark'
+              }`}
+            >
+              Live Kitchen Orders ({pendingFoodTickets.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('completed')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeTab === 'completed'
+                  ? 'bg-brand-green text-brand-beige shadow-xs'
+                  : 'bg-white text-brand-green/70 hover:bg-brand-beige border border-brand-beige-dark'
+              }`}
+            >
+              Completed Tickets ({completedFoodTickets.length})
+            </button>
+          </div>
+
+          <div className="relative min-w-[260px]">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-brand-green/40" />
+            <input
+              type="text"
+              placeholder="Search table, food item..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 bg-white rounded-xl border border-brand-beige-dark text-xs focus:outline-none focus:border-brand-gold"
+            />
+          </div>
         </div>
 
-        {activeTab === 'live' ? (
-          /* 2 Stage Columns: PLACED -> ACCEPTED (Ready to Complete) */
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* STAGE 1: Placed (Incoming) */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b-2 border-amber-500">
-                <div className="flex items-center gap-2">
-                  <span className="w-3 h-3 rounded-full bg-amber-500 animate-ping" />
-                  <h2 className="font-extrabold text-sm uppercase tracking-wider text-brand-green">
-                    1. Placed (Incoming)
-                  </h2>
-                </div>
-                <span className="text-xs font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-mono">
-                  {placedOrders.length}
-                </span>
-              </div>
+        {/* Section Header */}
+        <div className="flex items-center justify-between pb-1 border-b border-brand-beige-dark">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+            <h2 className="text-xs font-black uppercase tracking-wider text-brand-green">
+              {activeTab === 'live' ? 'INCOMING ORDERS' : 'COMPLETED KITCHEN ORDERS'}
+            </h2>
+          </div>
+          <span className="text-xs font-mono font-bold text-brand-green bg-brand-beige px-2 py-0.5 rounded-full">
+            {displayedFoodTickets.length}
+          </span>
+        </div>
 
-              {placedOrders.length === 0 ? (
-                <div className="p-8 rounded-2xl bg-white border border-brand-beige-dark text-center space-y-2">
-                  <Sparkles className="w-8 h-8 text-amber-500/40 mx-auto" />
-                  <p className="text-xs font-bold text-brand-green/60">No pending incoming orders</p>
-                  <p className="text-[11px] text-brand-green/40">New customer orders will ring here</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {placedOrders.map((order) => (
-                    <OrderCard
-                      key={order.id}
-                      order={order}
-                      onUpdateStatus={handleUpdateStatus}
-                      isKitchenView={true}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* STAGE 2: Accepted (Cooking / In Kitchen -> Complete Order) */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b-2 border-blue-500">
-                <div className="flex items-center gap-2">
-                  <Flame className="w-4 h-4 text-blue-600" />
-                  <h2 className="font-extrabold text-sm uppercase tracking-wider text-brand-green">
-                    2. Accepted (In Kitchen)
-                  </h2>
-                </div>
-                <span className="text-xs font-black px-2 py-0.5 rounded-full bg-blue-100 text-blue-900 font-mono">
-                  {acceptedOrders.length}
-                </span>
-              </div>
-
-              {acceptedOrders.length === 0 ? (
-                <div className="p-8 rounded-2xl bg-white border border-brand-beige-dark text-center space-y-2">
-                  <Clock className="w-8 h-8 text-blue-500/40 mx-auto" />
-                  <p className="text-xs font-bold text-brand-green/60">No orders currently cooking</p>
-                  <p className="text-[11px] text-brand-green/40">Accept incoming orders to begin preparation</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {acceptedOrders.map((order) => (
-                    <OrderCard
-                      key={order.id}
-                      order={order}
-                      onUpdateStatus={handleUpdateStatus}
-                      isKitchenView={true}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+        {/* Kitchen KDS Food Cards Grid */}
+        {displayedFoodTickets.length === 0 ? (
+          <div className="p-12 rounded-2xl bg-white border border-brand-beige-dark text-center space-y-2">
+            <ChefHat className="w-10 h-10 text-brand-green/30 mx-auto" />
+            <p className="text-sm font-bold text-brand-green">
+              {activeTab === 'live'
+                ? 'No pending food orders for the kitchen'
+                : 'No completed food tickets found'}
+            </p>
+            <p className="text-xs text-brand-green/60">
+              {activeTab === 'live'
+                ? 'Appetizers, main courses, sizzlers, and kitchen dishes will appear here in real time.'
+                : 'Prepared kitchen orders will be listed here.'}
+            </p>
           </div>
         ) : (
-          /* Completed Orders View */
-          <div className="space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b-2 border-emerald-600">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                <h2 className="font-extrabold text-sm uppercase tracking-wider text-brand-green">
-                  Completed Orders ({completedOrders.length})
-                </h2>
-              </div>
-            </div>
-
-            {completedOrders.length === 0 ? (
-              <div className="p-12 bg-white rounded-3xl border border-brand-beige-dark text-center space-y-2">
-                <Clock className="w-8 h-8 text-brand-green/30 mx-auto" />
-                <p className="text-xs font-bold text-brand-green/60">No completed tickets yet today</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {completedOrders.map((order) => (
-                  <OrderCard
-                    key={order.id}
-                    order={order}
-                    onUpdateStatus={handleUpdateStatus}
-                    isKitchenView={true}
-                  />
-                ))}
-              </div>
-            )}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {displayedFoodTickets.map((order) => (
+              <StationTicketCard
+                key={order.id}
+                orderId={order.id}
+                tableNumber={order.tableNumber}
+                customerName={order.customerName}
+                customerMobile={order.customerMobile}
+                createdAt={order.createdAt}
+                items={order.items}
+                stationType="CHEF"
+                specialInstructions={order.specialInstructions}
+                onDone={() => handleMarkDone(order.id)}
+                isCompleted={activeTab === 'completed'}
+              />
+            ))}
           </div>
         )}
       </div>

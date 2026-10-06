@@ -13,12 +13,15 @@ import {
   QrCode,
   Settings,
   UserCheck,
+  Users,
   LogOut,
   Menu as MenuIcon,
   X,
   UtensilsCrossed,
   ShieldCheck,
   ChevronRight,
+  Coffee,
+  FileText,
 } from 'lucide-react';
 
 interface NavItem {
@@ -37,13 +40,21 @@ const NAV_ITEMS: NavItem[] = [
     icon: LayoutDashboard,
     roles: ['ADMIN'],
   },
-  // Chef Primary KDS
+  // 1. KOT: Beverage & Dessert Station
+  {
+    name: 'KOT',
+    href: '/kot',
+    icon: Coffee,
+    roles: ['ADMIN', 'CHEF'],
+    badge: 'LIVE',
+  },
+  // 2. Kitchen KDS: Food Items & Kitchen Cooking Line
   {
     name: 'Kitchen KDS',
     href: '/chef',
     icon: ChefHat,
     roles: ['CHEF', 'ADMIN'],
-    badge: 'Live',
+    badge: 'LIVE',
   },
   // Orders Management (Both)
   {
@@ -73,6 +84,13 @@ const NAV_ITEMS: NavItem[] = [
     icon: UtensilsCrossed,
     roles: ['ADMIN'],
   },
+  // Staff & Chefs Management (Admin Only)
+  {
+    name: 'Chef Management',
+    href: '/staff',
+    icon: Users,
+    roles: ['ADMIN'],
+  },
   // Settings (Admin Only)
   {
     name: 'Cafe Settings',
@@ -85,6 +103,13 @@ const NAV_ITEMS: NavItem[] = [
     name: 'My Profile',
     href: '/profile',
     icon: UserCheck,
+    roles: ['ADMIN', 'CHEF'],
+  },
+  // Switch to Customer Ordering Menu
+  {
+    name: 'Customer Menu',
+    href: '/',
+    icon: UtensilsCrossed,
     roles: ['ADMIN', 'CHEF'],
   },
 ];
@@ -102,8 +127,8 @@ export function AppLayout({
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-brand-beige-light flex items-center justify-center">
-        <div className="w-8 h-8 rounded-full border-2 border-brand-green border-t-transparent animate-spin" />
+      <div className="min-h-screen bg-brand-beige-light flex items-center justify-center" suppressHydrationWarning>
+        <div className="w-8 h-8 rounded-full border-2 border-brand-green border-t-transparent animate-spin" suppressHydrationWarning />
       </div>
     );
   }
@@ -111,7 +136,7 @@ export function AppLayout({
   // Route protection
   if (requiredRole && !canAccess(requiredRole)) {
     return (
-      <div className="min-h-screen bg-brand-beige-light flex flex-col font-sans">
+      <div className="min-h-screen bg-brand-beige-light flex flex-col font-sans" suppressHydrationWarning>
         <div className="p-4 border-b border-brand-beige-dark bg-white flex items-center justify-between">
           <span className="font-black text-brand-green">Vaan Vibes Management</span>
           <button
@@ -239,7 +264,8 @@ export function AppLayout({
                       <span>{item.name}</span>
                     </div>
                     {item.badge && (
-                      <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-brand-green-light text-brand-gold font-bold">
+                      <span className="flex items-center gap-1 text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                         {item.badge}
                       </span>
                     )}
@@ -322,7 +348,12 @@ export function AppLayout({
                   <span>{item.name}</span>
                 </div>
                 {item.badge ? (
-                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-brand-green-light text-brand-gold font-bold">
+                  <span className={`flex items-center gap-1 text-[9px] font-mono uppercase px-2 py-0.5 rounded-full font-bold ${
+                    isActive
+                      ? 'bg-brand-green text-brand-gold'
+                      : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                  }`}>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                     {item.badge}
                   </span>
                 ) : (
