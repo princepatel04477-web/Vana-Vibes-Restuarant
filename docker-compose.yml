@@ -1,0 +1,42 @@
+# ==============================================================================
+# Production Docker Compose
+# Service: Next.js 16 Standalone Web Application
+# All environment variables are loaded directly from .env.example (with .env.local overrides).
+# No need to create a .env file!
+# ==============================================================================
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME:-cosmosnexus}_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.example
+      - path: .env.local
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      UV_THREADPOOL_SIZE: 64
+      NODE_OPTIONS: "--max-old-space-size=2048"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    networks:
+      - app_network
+
+networks:
+  app_network:
+    name: ${COMPOSE_PROJECT_NAME:-cosmosnexus}_network
+    driver: bridge
