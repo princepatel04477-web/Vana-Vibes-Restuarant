@@ -838,14 +838,16 @@ export default function ChefManagementPage() {
                 <FieldError message={editFieldErrors.email} id="edit-chef-email-error" />
               </div>
 
-              {/* Contact Number */}
+              {/* Contact Number - Permanent and Locked */}
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <label className="font-bold text-brand-green flex items-center gap-1">
+                  <label className="font-bold text-brand-green flex items-center gap-1.5">
                     <span>Contact Number</span>
-                    <span className="text-red-500 font-bold">*</span>
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300">
+                      Permanent / Final
+                    </span>
                   </label>
-                  <span className="text-[10px] text-brand-green/60 font-mono">Min. 10 digits</span>
+                  <span className="text-[10px] text-brand-green/60 font-mono">10 digits</span>
                 </div>
                 <input
                   type="tel"
@@ -853,22 +855,16 @@ export default function ChefManagementPage() {
                   inputMode="numeric"
                   maxLength={10}
                   required
-                  aria-invalid={!!editFieldErrors.contact}
-                  aria-describedby={editFieldErrors.contact ? "edit-chef-contact-error" : undefined}
+                  readOnly
+                  disabled={true}
+                  aria-describedby="edit-chef-contact-help"
                   placeholder="10-digit mobile number"
                   value={editContact}
-                  onChange={(e) => {
-                    setEditContact(e.target.value.replace(/\D/g, '').slice(0, 10));
-                    if (editFieldErrors.contact) setEditFieldErrors((prev) => ({ ...prev, contact: undefined }));
-                  }}
-                  disabled={isSavingEdit}
-                  className={`w-full px-3.5 py-2.5 rounded-xl border focus:outline-none font-medium font-mono text-brand-green transition-colors ${
-                    editFieldErrors.contact
-                      ? 'border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-100 bg-red-50/10'
-                      : 'border-brand-beige-dark focus:border-brand-green focus:ring-2 focus:ring-brand-green/20 bg-white'
-                  }`}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-brand-beige-dark/80 bg-gray-100 font-medium font-mono text-gray-500 cursor-not-allowed select-none"
                 />
-                <FieldError message={editFieldErrors.contact} id="edit-chef-contact-error" />
+                <p id="edit-chef-contact-help" className="text-[10px] text-amber-700 font-medium">
+                  Staff contact number is permanent and cannot be modified once registered.
+                </p>
               </div>
 
               {/* Role Dropdown - strictly Chef */}

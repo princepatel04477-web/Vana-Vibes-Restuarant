@@ -1,3 +1,4 @@
+import re
 from typing import List, Optional
 from sqlalchemy.orm import Session
 
@@ -12,6 +13,29 @@ def get_user_by_id(db: Session, user_id: str) -> Optional[User]:
 
 def get_user_by_email(db: Session, email: str) -> Optional[User]:
     return db.query(User).filter(User.email == email.strip().lower()).first()
+
+
+def get_user_by_phone(db: Session, phone: str) -> Optional[User]:
+    cleaned = phone.strip()
+    return db.query(User).filter(User.contact_number == cleaned).first()
+
+
+def get_user_by_identifier(db: Session, identifier: str) -> Optional[User]:
+    ident = identifier.strip()
+    if not ident:
+        return None
+    # 1. Try by contact_number directly
+    digits = re.sub(r"\D", "", ident)
+    if len(digits) == 10:
+        by_phone = db.query(User).filter(User.contact_number == digits).first()
+        if by_phone:
+            return by_phone
+        # Also check synthetic email for phone accounts: <digits>@vaanvibes.com
+        by_synthetic = db.query(User).filter(User.email == f"{digits}@vaanvibes.com").first()
+        if by_synthetic:
+            return by_synthetic
+    # 2. Try by email
+    return db.query(User).filter(User.email == ident.lower()).first()
 
 
 def get_chefs(db: Session) -> List[User]:

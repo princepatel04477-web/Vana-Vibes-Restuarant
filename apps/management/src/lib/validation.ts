@@ -18,6 +18,21 @@ export function sanitizePhone(input: string): string {
   return input.replace(/\D/g, '').slice(0, 10);
 }
 
+export function validateIdentifierField(value: string, required = true): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return required ? 'Please enter your phone number or email.' : null;
+  }
+  // Check if 10-digit phone or valid email
+  if (isValidPhone(trimmed) || isValidEmail(trimmed)) {
+    return null;
+  }
+  if (/^\d+$/.test(trimmed)) {
+    return 'Phone number must contain exactly 10 digits';
+  }
+  return 'Please enter a valid 10-digit phone number or email address';
+}
+
 export function validateEmailField(email: string, required = true): string | null {
   const trimmed = email.trim();
   if (!trimmed) {

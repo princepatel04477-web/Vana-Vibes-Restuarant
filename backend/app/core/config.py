@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30       # 30 days
     CAFE_ID: str = "van-vibes"
     CAFE_SECRET_KEY: str = "vv_cafe_standee_hmac_secret_2026"
+    ADMIN_PHONE_NUMBERS: str = "9773291261,9054032800"
+
+    @property
+    def admin_phones_list(self) -> list[str]:
+        return [p.strip() for p in self.ADMIN_PHONE_NUMBERS.split(",") if p.strip()]
 
     # Cafe Branding & Contact Settings
     CAFE_NAME: str = "Vaan Vibes Cafe & Restro"

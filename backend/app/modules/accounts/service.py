@@ -3,6 +3,7 @@ from typing import List
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.security import create_access_token, create_refresh_token, decode_refresh_token, verify_password
 from app.modules.accounts import crud
 from app.modules.accounts.models import User
@@ -49,11 +50,12 @@ def validate_password_strength(password: str) -> None:
 class AccountService:
     @staticmethod
     def authenticate(db: Session, payload: LoginRequest) -> TokenResponse:
-        user = crud.get_user_by_email(db, payload.email)
+        ident = payload.identifier
+        user = crud.get_user_by_identifier(db, ident)
         if not user or not verify_password(payload.password, user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password",
+                detail="Incorrect credentials. Please verify your phone number or email and password.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         if not user.is_active:
@@ -177,6 +179,13 @@ class AccountService:
                 detail="Contact number must be exactly 10 numeric digits.",
             )
 
+        # Enforce that registered staff contact number stays final and cannot be modified
+        if chef.contact_number and clean_contact != chef.contact_number:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Staff contact number is permanent and cannot be modified once registered ({chef.contact_number}).",
+            )
+
         clean_role = payload.role.upper().strip() if payload.role else "CHEF"
         if clean_role not in ["CHEF", "ADMIN"]:
             raise HTTPException(
@@ -205,10 +214,10 @@ class AccountService:
                 detail=f"Chef with id '{chef_id}' not found.",
             )
 
-        if chef.email == "admin@vaanvibes.com":
+        if chef.email == "admin@vaanvibes.com" or (chef.contact_number and chef.contact_number in settings.admin_phones_list):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Default administrator account cannot be deleted.",
+                detail="Designated administrator accounts cannot be deleted.",
             )
 
         chef_name = chef.name

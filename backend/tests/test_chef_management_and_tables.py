@@ -160,11 +160,11 @@ def test_admin_update_and_delete_chef():
     chef_id = chef_data['id']
     assert chef_data['name'] == 'Chef Ranveer'
 
-    # Update chef
+    # Update chef with same contact number (contact number stays final)
     update_payload = {
         'name': 'Chef Ranveer Brar',
         'email': email,
-        'contact_number': '9123456789',
+        'contact_number': '9876543210',
         'role': 'CHEF',
         'shift': 'Evening',
         'assigned_station': 'Tandoor & Grill',
@@ -174,8 +174,19 @@ def test_admin_update_and_delete_chef():
     assert update_res.status_code == 200
     updated_data = update_res.json()
     assert updated_data['name'] == 'Chef Ranveer Brar'
-    assert updated_data['contact_number'] == '9123456789'
+    assert updated_data['contact_number'] == '9876543210'
     assert updated_data['assigned_station'] == 'Tandoor & Grill'
+
+    # Attempting to alter registered staff contact number is rejected (stays final)
+    reject_res = client.put(
+        f'/api/v1/auth/chefs/{chef_id}',
+        json={**update_payload, 'contact_number': '9123456789'},
+        headers={'Authorization': f'Bearer {admin_token}'}
+    )
+    assert reject_res.status_code == 400
+    err_body = reject_res.json()
+    err_text = (err_body.get('message') or err_body.get('detail') or '').lower()
+    assert 'permanent' in err_text
 
     # Delete chef
     delete_res = client.delete(f'/api/v1/auth/chefs/{chef_id}', headers={'Authorization': f'Bearer {admin_token}'})

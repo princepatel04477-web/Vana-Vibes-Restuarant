@@ -4,8 +4,14 @@ from pydantic import BaseModel, field_validator, ConfigDict, EmailStr, Field
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: Optional[str] = None
+    username: Optional[str] = None
     password: str
+
+    @property
+    def identifier(self) -> str:
+        raw = self.username or self.email or ""
+        return raw.strip()
 
 
 class UserResponse(BaseModel):

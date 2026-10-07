@@ -13,6 +13,8 @@ from app.modules.accounts.models import User
 from app.modules.menu.models import Category, MenuItem
 from app.modules.settings.models import CafeSettings
 from app.modules.tables.models import Table
+from app.modules.sessions.models import DiningSession, BillingInvoice
+from app.modules.orders.models import Order, OrderItem
 
 
 def seed_database():
@@ -32,11 +34,58 @@ def seed_database():
     try:
         # 0. Seed Default Users if missing
         print("Ensuring default admin & chef accounts...")
+        admin1_phone = "9773291261"
+        admin2_phone = "9054032800"
+
+        # Admin 1
+        admin_user_1 = db.query(User).filter(
+            (User.email == f"{admin1_phone}@vaanvibes.com") | (User.contact_number == admin1_phone)
+        ).first()
+        if not admin_user_1:
+            admin_user_1 = User(
+                email=f"{admin1_phone}@vaanvibes.com",
+                name="Admin (9773291261)",
+                contact_number=admin1_phone,
+                password_hash=hash_password("admin123"),
+                role="ADMIN",
+                shift="All Day",
+                assigned_station="Management",
+                is_active=True,
+            )
+            db.add(admin_user_1)
+        else:
+            admin_user_1.role = "ADMIN"
+            admin_user_1.contact_number = admin1_phone
+            admin_user_1.is_active = True
+
+        # Admin 2
+        admin_user_2 = db.query(User).filter(
+            (User.email == f"{admin2_phone}@vaanvibes.com") | (User.contact_number == admin2_phone)
+        ).first()
+        if not admin_user_2:
+            admin_user_2 = User(
+                email=f"{admin2_phone}@vaanvibes.com",
+                name="Admin (9054032800)",
+                contact_number=admin2_phone,
+                password_hash=hash_password("admin123"),
+                role="ADMIN",
+                shift="All Day",
+                assigned_station="Management",
+                is_active=True,
+            )
+            db.add(admin_user_2)
+        else:
+            admin_user_2.role = "ADMIN"
+            admin_user_2.contact_number = admin2_phone
+            admin_user_2.is_active = True
+
+        # Ensure legacy email admin also exists for backward compatibility
         admin_user = db.query(User).filter(User.email == "admin@vaanvibes.com").first()
         if not admin_user:
             admin_user = User(
                 email="admin@vaanvibes.com",
                 name="Admin Manager",
+                contact_number=admin1_phone,
                 password_hash=hash_password("admin123"),
                 role="ADMIN",
                 shift="All Day",

@@ -2,25 +2,25 @@
 
 import React, { useState, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { Eye, EyeOff, Lock, Mail, ArrowRight } from 'lucide-react';
+import { Eye, EyeOff, Lock, User as UserIcon, ArrowRight } from 'lucide-react';
 import { FieldError, FormError } from '@/components/ui/FieldError';
-import { validateEmailField, validatePasswordField } from '@/lib/validation';
+import { validateIdentifierField, validatePasswordField } from '@/lib/validation';
 
 export default function LoginPage() {
   const { login } = useAuth();
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<{ identifier?: string; password?: string }>({});
   const [generalError, setGeneralError] = useState<string | null>(null);
 
-  const emailInputRef = useRef<HTMLInputElement>(null);
+  const identifierInputRef = useRef<HTMLInputElement>(null);
   const passwordInputRef = useRef<HTMLInputElement>(null);
 
-  const validateField = (field: 'email' | 'password', value: string): string | undefined => {
-    if (field === 'email') {
-      return validateEmailField(value, true) || undefined;
+  const validateField = (field: 'identifier' | 'password', value: string): string | undefined => {
+    if (field === 'identifier') {
+      return validateIdentifierField(value, true) || undefined;
     }
     if (field === 'password') {
       return validatePasswordField(value) || undefined;
@@ -28,16 +28,16 @@ export default function LoginPage() {
     return undefined;
   };
 
-  const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleIdentifierChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
-    setEmail(val);
-    if (fieldErrors.email) {
-      setFieldErrors((prev) => ({ ...prev, email: validateField('email', val) }));
+    setIdentifier(val);
+    if (fieldErrors.identifier) {
+      setFieldErrors((prev) => ({ ...prev, identifier: validateField('identifier', val) }));
     }
   };
 
-  const handleEmailBlur = () => {
-    setFieldErrors((prev) => ({ ...prev, email: validateField('email', email) }));
+  const handleIdentifierBlur = () => {
+    setFieldErrors((prev) => ({ ...prev, identifier: validateField('identifier', identifier) }));
   };
 
   const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -56,17 +56,17 @@ export default function LoginPage() {
     e.preventDefault();
     setGeneralError(null);
 
-    const emailErr = validateField('email', email);
+    const identErr = validateField('identifier', identifier);
     const passErr = validateField('password', password);
 
-    const errors: { email?: string; password?: string } = {};
-    if (emailErr) errors.email = emailErr;
+    const errors: { identifier?: string; password?: string } = {};
+    if (identErr) errors.identifier = identErr;
     if (passErr) errors.password = passErr;
 
     setFieldErrors(errors);
 
-    if (emailErr) {
-      emailInputRef.current?.focus();
+    if (identErr) {
+      identifierInputRef.current?.focus();
       return;
     }
     if (passErr) {
@@ -77,9 +77,9 @@ export default function LoginPage() {
     setIsSubmitting(true);
 
     try {
-      const result = await login(email.trim(), password);
+      const result = await login(identifier.trim(), password);
       if (!result.success) {
-        setGeneralError(result.error || 'Invalid email or password.');
+        setGeneralError(result.error || 'Invalid phone/email or password.');
       }
     } catch {
       setGeneralError('Unable to connect to the server. Please try again.');
@@ -131,36 +131,36 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={handleSubmit} noValidate className="space-y-4">
-            {/* Email Field */}
+            {/* Phone or Email Field */}
             <div className="space-y-1.5">
-              <label htmlFor="login-email-input" className="text-xs font-bold text-brand-green block">
-                Email Address <span className="text-red-500">*</span>
+              <label htmlFor="login-identifier-input" className="text-xs font-bold text-brand-green block">
+                Phone Number or Email Address <span className="text-red-500">*</span>
               </label>
               <div className="relative flex items-center">
                 <div className="absolute left-3.5 text-brand-green/40 pointer-events-none">
-                  <Mail className="w-4 h-4" />
+                  <UserIcon className="w-4 h-4" />
                 </div>
                 <input
-                  id="login-email-input"
-                  ref={emailInputRef}
-                  type="email"
+                  id="login-identifier-input"
+                  ref={identifierInputRef}
+                  type="text"
                   autoComplete="username"
-                  value={email}
-                  onChange={handleEmailChange}
-                  onBlur={handleEmailBlur}
-                  placeholder="e.g. admin@vaanvibes.in"
+                  value={identifier}
+                  onChange={handleIdentifierChange}
+                  onBlur={handleIdentifierBlur}
+                  placeholder="e.g. 9773291261 or admin@vaanvibes.in"
                   aria-required="true"
-                  aria-invalid={!!fieldErrors.email}
-                  aria-describedby={fieldErrors.email ? 'login-email-error' : undefined}
+                  aria-invalid={!!fieldErrors.identifier}
+                  aria-describedby={fieldErrors.identifier ? 'login-identifier-error' : undefined}
                   disabled={isSubmitting}
                   className={`w-full pl-10 pr-3.5 py-2.5 rounded-xl border text-xs sm:text-sm text-brand-green placeholder:text-brand-green/30 focus:outline-none min-h-[42px] transition-colors ${
-                    fieldErrors.email
+                    fieldErrors.identifier
                       ? 'border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-100 bg-red-50/10'
                       : 'border-brand-beige-dark focus:border-brand-green focus:ring-2 focus:ring-brand-green/20'
                   }`}
                 />
               </div>
-              <FieldError message={fieldErrors.email} id="login-email-error" />
+              <FieldError message={fieldErrors.identifier} id="login-identifier-error" />
             </div>
 
             {/* Password Field with Toggle (👁️) */}
