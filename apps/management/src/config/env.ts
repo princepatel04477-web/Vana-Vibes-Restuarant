@@ -40,23 +40,27 @@ export const envConfig = {
         return resolved.replace(/\/+$/, '');
       }
 
-      // Dynamically match the current browser host on port 9000
-      return `${protocol}//${hostname}:9000/api/v1`;
+      // If on local development AND explicitly targeting standalone port 9000:
+      if ((hostname === 'localhost' || hostname === '127.0.0.1') && envUrl?.includes(':9000')) {
+        return `${protocol}//${hostname}:9000/api/v1`;
+      }
+
+      // Default for Vercel deployment / all-in-one Next.js: relative /api/v1
+      return '/api/v1';
     }
 
     const ssrBackend = process.env.FASTAPI_BACKEND_URL;
-    if (ssrBackend && ssrBackend.trim()) {
+    if (ssrBackend && ssrBackend.trim() && !ssrBackend.includes(':9000')) {
       return ssrBackend.trim().replace(/\/+$/, '');
     }
 
-    return 'http://127.0.0.1:9000/api/v1';
+    return '/api/v1';
   },
 
   /**
    * Dynamically resolves the live WebSocket Stream URL with auth token.
-   * - In browser, matches current server hostname on port 9000
-   * - Automatically selects wss:// on https: and ws:// on http:
-   * - Appends token query param safely
+   * - On localhost, connects to port 9000
+   * - In production Vercel serverless, disables WebSocket if no remote stream server is configured
    */
   getWebSocketUrl(token?: string): string {
     const wsToken =
@@ -66,33 +70,41 @@ export const envConfig = {
 
     if (typeof window !== 'undefined') {
       const hostname = window.location.hostname;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const envWsUrl = process.env.NEXT_PUBLIC_WS_URL;
 
-      let baseWsUrl = '';
       if (
         envWsUrl &&
         envWsUrl.trim() &&
         !envWsUrl.includes('localhost') &&
         !envWsUrl.includes('127.0.0.1')
       ) {
-        baseWsUrl = envWsUrl.trim();
-        if (protocol === 'wss:' && baseWsUrl.startsWith('ws://')) {
+        let baseWsUrl = envWsUrl.trim();
+        if (window.location.protocol === 'https:' && baseWsUrl.startsWith('ws://')) {
           baseWsUrl = baseWsUrl.replace(/^ws:\/\//, 'wss://');
         }
-      } else {
-        baseWsUrl = `${protocol}//${hostname}:9000/api/v1/ws/orders`;
+        if (wsToken && !baseWsUrl.includes('token=')) {
+          const separator = baseWsUrl.includes('?') ? '&' : '?';
+          return `${baseWsUrl}${separator}token=${encodeURIComponent(wsToken)}`;
+        }
+        return baseWsUrl;
       }
 
-      if (wsToken && !baseWsUrl.includes('token=')) {
-        const separator = baseWsUrl.includes('?') ? '&' : '?';
-        return `${baseWsUrl}${separator}token=${encodeURIComponent(wsToken)}`;
+      // On localhost development with backend running on port 9000
+      if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const baseWsUrl = `${protocol}//${hostname}:9000/api/v1/ws/orders`;
+        if (wsToken && !baseWsUrl.includes('token=')) {
+          const separator = baseWsUrl.includes('?') ? '&' : '?';
+          return `${baseWsUrl}${separator}token=${encodeURIComponent(wsToken)}`;
+        }
+        return baseWsUrl;
       }
 
-      return baseWsUrl;
+      // In production on Vercel without external WS server
+      return '';
     }
 
-    return 'ws://127.0.0.1:9000/api/v1/ws/orders';
+    return '';
   },
 
   /**

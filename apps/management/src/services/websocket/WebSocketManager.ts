@@ -37,6 +37,9 @@ class WebSocketManagerService {
 
     this.isExplicitDisconnect = false;
     const wsUrl = envConfig.getWebSocketUrl(token);
+    if (!wsUrl) {
+      return;
+    }
 
     try {
       this.socket = new WebSocket(wsUrl);
