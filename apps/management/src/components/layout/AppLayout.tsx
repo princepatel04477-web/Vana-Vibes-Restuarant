@@ -7,11 +7,11 @@ import { useAuth } from '@/context/AuthContext';
 import { AccessDenied } from '@/components/ui/AccessDenied';
 import {
   LayoutDashboard,
+  LayoutGrid,
   ReceiptText,
   ChefHat,
   ShoppingBag,
   Receipt,
-  QrCode,
   Settings,
   UserCheck,
   LogOut,
@@ -76,12 +76,13 @@ const NAV_ITEMS: NavItem[] = [
     icon: Receipt,
     roles: ['ADMIN'],
   },
-  // Tables & QR (Admin Only)
+  // Tables & Floor Plan (Admin & Chef)
   {
-    name: 'Table QR Standees',
+    name: 'Table Dashboard',
     href: '/tables',
-    icon: QrCode,
-    roles: ['ADMIN'],
+    icon: LayoutGrid,
+    roles: ['ADMIN', 'CHEF'],
+    badge: 'Live',
   },
   // Menu Administration (Admin Only)
   {

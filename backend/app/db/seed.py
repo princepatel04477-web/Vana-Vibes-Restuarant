@@ -123,13 +123,13 @@ def seed_database():
         db.add(settings_record)
         db.flush()
 
-        # 2. Tables (12 Cafe Tables, all AVAILABLE)
-        print("Seeding Tables (12)...")
-        for i in range(1, 13):
+        # 2. Tables (28 A/C Dining Tables matching restaurant floor plan)
+        print("Seeding Tables (28 A/C Tables)...")
+        for i in range(1, 29):
             pad = f"{i:02d}"
             table_id = f"T{pad}"
             token = f"vv_sec_{table_id.lower()}_{(i * 7393 + 19283):x}"
-            capacity = 2 if i <= 4 else (4 if i <= 8 else 6)
+            capacity = 2 if i <= 6 else (4 if i <= 20 else 6)
             t = Table(
                 id=table_id,
                 table_number=i,
@@ -137,6 +137,7 @@ def seed_database():
                 token=token,
                 capacity=capacity,
                 status="AVAILABLE",
+                zone="A/C",
                 is_active=True,
             )
             db.add(t)

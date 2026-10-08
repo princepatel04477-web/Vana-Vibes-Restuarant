@@ -37,6 +37,8 @@ export interface TableInfo {
   qrCodeUrl: string; // Full URL or relative path to scan
   capacity: number;
   status: TableStatus;
+  section?: string; // e.g. 'A/C', 'Non-A/C', 'Garden'
+  seatedAt?: string;
   activeSession?: DiningSession;
 }
 

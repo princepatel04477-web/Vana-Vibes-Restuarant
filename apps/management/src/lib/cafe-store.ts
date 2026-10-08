@@ -1,4 +1,4 @@
-import { BillData, CafeDetails, CartItem, Order, OrderStatus, PaymentStatus, TableInfo } from '@/types/cafe';
+import { BillData, CafeDetails, CartItem, Order, OrderStatus, PaymentStatus, TableInfo, TableStatus } from '@/types/cafe';
 import { MENU_ITEMS } from '@/data/vaan-vibes-menu';
 import { buildCustomerMenuUrl } from './qr-url';
 
@@ -15,73 +15,81 @@ export const CAFE_INFO: CafeDetails = {
 };
 
 // Initial tables with pre-generated secure tokens
-const INITIAL_TABLES: TableInfo[] = Array.from({ length: 12 }, (_, i) => {
-  const num = i + 1;
-  const pad = num.toString().padStart(2, '0');
-  const id = `T${pad}`;
-  // Deterministic, secure token based on table index
-  const token = `vv_sec_${id.toLowerCase()}_${(num * 7393 + 19283).toString(16)}`;
-  return {
-    id,
-    tableNumber: num,
-    name: `Table ${pad}`,
-    token,
-    qrCodeUrl: buildCustomerMenuUrl({ tableId: id, token }),
-    capacity: num <= 4 ? 2 : num <= 8 ? 4 : 6,
-    status: num === 3 || num === 7 ? 'OCCUPIED' : 'AVAILABLE',
-  };
-});
+// A/C Section contains Tables 01 to 28 (matching physical floor plan)
+const INITIAL_TABLES: TableInfo[] = [
+  ...Array.from({ length: 28 }, (_, i) => {
+    const num = i + 1;
+    const pad = num.toString().padStart(2, '0');
+    const id = `T${pad}`;
+    const token = `vv_sec_${id.toLowerCase()}_${(num * 7393 + 19283).toString(16)}`;
+    // Occupied or special status matching floor plan in screenshot:
+    // Occupied (Blue): 2, 5, 8, 12
+    // Kitchen Prep (Green): 14, 26
+    // Billed (Yellow): 9, 19, 27, 28
+    const isOccupied = [2, 5, 8, 9, 12, 14, 19, 26, 27, 28].includes(num);
+    return {
+      id,
+      tableNumber: num,
+      name: `Table ${pad}`,
+      token,
+      qrCodeUrl: buildCustomerMenuUrl({ tableId: id, token }),
+      capacity: num <= 6 ? 2 : num <= 20 ? 4 : 6,
+      status: (isOccupied ? 'OCCUPIED' : 'AVAILABLE') as TableStatus,
+      section: 'A/C',
+      seatedAt: isOccupied ? new Date(Date.now() - (num * 3 + 12) * 60 * 1000).toISOString() : undefined,
+    };
+  }),
+  // Non-A/C Section (Tables 29-36)
+  ...Array.from({ length: 8 }, (_, i) => {
+    const num = i + 29;
+    const pad = num.toString().padStart(2, '0');
+    const id = `T${pad}`;
+    const token = `vv_sec_${id.toLowerCase()}_${(num * 7393 + 19283).toString(16)}`;
+    return {
+      id,
+      tableNumber: num,
+      name: `Table ${pad}`,
+      token,
+      qrCodeUrl: buildCustomerMenuUrl({ tableId: id, token }),
+      capacity: 4,
+      status: 'AVAILABLE' as TableStatus,
+      section: 'Non-A/C',
+    };
+  }),
+  // Garden / Terrace (Tables 37-44)
+  ...Array.from({ length: 8 }, (_, i) => {
+    const num = i + 37;
+    const pad = num.toString().padStart(2, '0');
+    const id = `T${pad}`;
+    const token = `vv_sec_${id.toLowerCase()}_${(num * 7393 + 19283).toString(16)}`;
+    return {
+      id,
+      tableNumber: num,
+      name: `Table ${pad}`,
+      token,
+      qrCodeUrl: buildCustomerMenuUrl({ tableId: id, token }),
+      capacity: 4,
+      status: 'AVAILABLE' as TableStatus,
+      section: 'Garden',
+    };
+  }),
+];
 
-// Seed sample orders for immediate live dashboard readiness
+// Seed sample orders for immediate live dashboard readiness matching image floor plan:
 const INITIAL_ORDERS: Order[] = [
+  // Table 14: Green (In Kitchen / Preparing KOT)
   {
     id: 'VV-1001',
     cafeId: 'vaan-vibes',
-    tableId: 'T07',
-    tableNumber: 7,
-    sessionToken: 'sess_t07_mock_1',
-    customerName: 'Aarav Sharma',
+    tableId: 'T14',
+    tableNumber: 14,
+    sessionToken: 'sess_t14_live',
+    customerName: 'Dev Patel',
     customerMobile: '9825012345',
-    specialInstructions: 'Make coffee extra hot, no sugar in cappuccino',
+    specialInstructions: 'Penne Alfredo pasta extra creamy, Fries crispy',
     items: [
       {
-        id: 'hc-03-default',
-        menuItemId: 'hc-03',
-        name: 'Cappuccino',
-        category: 'hot-coffee',
-        price: 160,
-        quantity: 2,
-        specialInstructions: 'Extra hot',
-      },
-      {
-        id: 'to-03-default',
-        menuItemId: 'to-03',
-        name: 'Avocado Toast',
-        category: 'toastie',
-        price: 390,
-        quantity: 1,
-      },
-    ],
-    subtotal: 710,
-    tax: 35.5,
-    total: 745.5,
-    status: 'PREPARING',
-    paymentStatus: 'PAID',
-    createdAt: new Date(Date.now() - 18 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'VV-1002',
-    cafeId: 'vaan-vibes',
-    tableId: 'T03',
-    tableNumber: 3,
-    sessionToken: 'sess_t03_mock_2',
-    customerName: 'Priya Mehta',
-    customerMobile: '9898054321',
-    specialInstructions: 'Less spicy in pasta, extra dip for fries',
-    items: [
-      {
-        id: 'pa-02-default',
+        id: 'pa-02-1',
         menuItemId: 'pa-02',
         name: 'Alfredo Pasta',
         category: 'pasta',
@@ -90,7 +98,7 @@ const INITIAL_ORDERS: Order[] = [
         selectedOptions: { 'Choice of Pasta': 'Penne' },
       },
       {
-        id: 'ap-02-default',
+        id: 'ap-02-1',
         menuItemId: 'ap-02',
         name: 'Peri-Peri Fries',
         category: 'appetizers',
@@ -98,21 +106,357 @@ const INITIAL_ORDERS: Order[] = [
         quantity: 1,
       },
       {
-        id: 'ic-03-default',
+        id: 'ic-03-1',
         menuItemId: 'ic-03',
         name: 'Iced Latte',
         category: 'iced-coffee',
         price: 220,
+        quantity: 2,
+      },
+    ],
+    subtotal: 1135,
+    tax: 0,
+    total: 1135,
+    status: 'PREPARING',
+    paymentStatus: 'PENDING',
+    sessionStatus: 'OPEN',
+    billGenerated: false,
+    createdAt: new Date(Date.now() - 22 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+  },
+  // Table 26: Green (In Kitchen / Preparing KOT)
+  {
+    id: 'VV-1002',
+    cafeId: 'vaan-vibes',
+    tableId: 'T26',
+    tableNumber: 26,
+    sessionToken: 'sess_t26_live',
+    customerName: 'Kavita Joshi',
+    customerMobile: '9876543210',
+    specialInstructions: 'Thin crust Margherita pizza, Cold Coffee less sugar',
+    items: [
+      {
+        id: 'pz-01-1',
+        menuItemId: 'pz-01',
+        name: 'Margherita Pizza',
+        category: 'pizza',
+        price: 380,
+        quantity: 1,
+      },
+      {
+        id: 'bev-02-1',
+        menuItemId: 'bev-02',
+        name: 'Signature Cold Coffee',
+        category: 'cold-coffee',
+        price: 210,
+        quantity: 2,
+      },
+    ],
+    subtotal: 800,
+    tax: 0,
+    total: 800,
+    status: 'IN_KITCHEN',
+    paymentStatus: 'PENDING',
+    sessionStatus: 'OPEN',
+    billGenerated: false,
+    createdAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
+  },
+  // Table 02: Blue (Seated / Occupied)
+  {
+    id: 'VV-1003',
+    cafeId: 'vaan-vibes',
+    tableId: 'T02',
+    tableNumber: 2,
+    sessionToken: 'sess_t02_live',
+    customerName: 'Rohan Shah',
+    customerMobile: '9909012345',
+    items: [
+      {
+        id: 'hc-01-1',
+        menuItemId: 'hc-01',
+        name: 'Espresso',
+        category: 'hot-coffee',
+        price: 140,
+        quantity: 2,
+      },
+    ],
+    subtotal: 280,
+    tax: 0,
+    total: 280,
+    status: 'SERVED',
+    paymentStatus: 'PENDING',
+    sessionStatus: 'OPEN',
+    billGenerated: false,
+    createdAt: new Date(Date.now() - 32 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+  },
+  // Table 05: Blue (Seated / Occupied)
+  {
+    id: 'VV-1004',
+    cafeId: 'vaan-vibes',
+    tableId: 'T05',
+    tableNumber: 5,
+    sessionToken: 'sess_t05_live',
+    customerName: 'Ananya Verma',
+    customerMobile: '9824054321',
+    items: [
+      {
+        id: 'to-01-1',
+        menuItemId: 'to-01',
+        name: 'Cheese Garlic Bread',
+        category: 'toastie',
+        price: 260,
+        quantity: 1,
+      },
+      {
+        id: 'mo-01-1',
+        menuItemId: 'mo-01',
+        name: 'Virgin Mojito',
+        category: 'beverages',
+        price: 190,
+        quantity: 2,
+      },
+    ],
+    subtotal: 640,
+    tax: 0,
+    total: 640,
+    status: 'SERVED',
+    paymentStatus: 'PENDING',
+    sessionStatus: 'OPEN',
+    billGenerated: false,
+    createdAt: new Date(Date.now() - 28 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+  },
+  // Table 08: Blue (Seated / Occupied)
+  {
+    id: 'VV-1005',
+    cafeId: 'vaan-vibes',
+    tableId: 'T08',
+    tableNumber: 8,
+    sessionToken: 'sess_t08_live',
+    customerName: 'Vikram Singh',
+    customerMobile: '9712034567',
+    items: [
+      {
+        id: 'bg-01-1',
+        menuItemId: 'bg-01',
+        name: 'Veggie Supreme Burger',
+        category: 'burgers',
+        price: 320,
+        quantity: 1,
+      },
+      {
+        id: 'sh-02-1',
+        menuItemId: 'sh-02',
+        name: 'Belgian Chocolate Shake',
+        category: 'shakes',
+        price: 250,
         quantity: 1,
       },
     ],
-    subtotal: 915,
-    tax: 45.75,
-    total: 960.75,
-    status: 'ACCEPTED',
+    subtotal: 570,
+    tax: 0,
+    total: 570,
+    status: 'SERVED',
     paymentStatus: 'PENDING',
-    createdAt: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
+    sessionStatus: 'OPEN',
+    billGenerated: false,
+    createdAt: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+  },
+  // Table 12: Blue (Seated / Occupied)
+  {
+    id: 'VV-1006',
+    cafeId: 'vaan-vibes',
+    tableId: 'T12',
+    tableNumber: 12,
+    sessionToken: 'sess_t12_live',
+    customerName: 'Meera Rajput',
+    customerMobile: '9978012345',
+    items: [
+      {
+        id: 'sm-01-1',
+        menuItemId: 'sm-01',
+        name: 'Berry Blast Smoothie',
+        category: 'smoothies',
+        price: 240,
+        quantity: 2,
+      },
+    ],
+    subtotal: 480,
+    tax: 0,
+    total: 480,
+    status: 'SERVED',
+    paymentStatus: 'PENDING',
+    sessionStatus: 'OPEN',
+    billGenerated: false,
+    createdAt: new Date(Date.now() - 19 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
+  },
+  // Table 09: Yellow (Billed / Payment Pending)
+  {
+    id: 'VV-1007',
+    cafeId: 'vaan-vibes',
+    tableId: 'T09',
+    tableNumber: 9,
+    sessionToken: 'sess_t09_live',
+    customerName: 'Sanjay Rawal',
+    customerMobile: '9825123456',
+    items: [
+      {
+        id: 'pz-02-1',
+        menuItemId: 'pz-02',
+        name: 'Farmhouse Special Pizza',
+        category: 'pizza',
+        price: 450,
+        quantity: 1,
+      },
+      {
+        id: 'ap-01-1',
+        menuItemId: 'ap-01',
+        name: 'Garlic Parmesan Wedges',
+        category: 'appetizers',
+        price: 280,
+        quantity: 1,
+      },
+      {
+        id: 'ic-01-1',
+        menuItemId: 'ic-01',
+        name: 'Iced Americano',
+        category: 'iced-coffee',
+        price: 160,
+        quantity: 1,
+      },
+    ],
+    subtotal: 890,
+    tax: 0,
+    total: 890,
+    status: 'SERVED',
+    paymentStatus: 'PENDING',
+    sessionStatus: 'BILL_GENERATED',
+    billGenerated: true,
+    createdAt: new Date(Date.now() - 55 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
+  },
+  // Table 19: Yellow (Billed / Payment Pending)
+  {
+    id: 'VV-1008',
+    cafeId: 'vaan-vibes',
+    tableId: 'T19',
+    tableNumber: 19,
+    sessionToken: 'sess_t19_live',
+    customerName: 'Nehal Parikh',
+    customerMobile: '9898123456',
+    items: [
+      {
+        id: 'pa-01-1',
+        menuItemId: 'pa-01',
+        name: 'Arrabbiata Pasta',
+        category: 'pasta',
+        price: 360,
+        quantity: 2,
+      },
+      {
+        id: 'to-02-1',
+        menuItemId: 'to-02',
+        name: 'Paneer Tikka Panini',
+        category: 'toastie',
+        price: 340,
+        quantity: 1,
+      },
+      {
+        id: 'mo-02-1',
+        menuItemId: 'mo-02',
+        name: 'Peach Iced Tea',
+        category: 'beverages',
+        price: 180,
+        quantity: 1,
+      },
+    ],
+    subtotal: 1240,
+    tax: 0,
+    total: 1240,
+    status: 'SERVED',
+    paymentStatus: 'PENDING',
+    sessionStatus: 'BILL_GENERATED',
+    billGenerated: true,
+    createdAt: new Date(Date.now() - 48 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
+  },
+  // Table 27: Yellow (Billed / Payment Pending)
+  {
+    id: 'VV-1009',
+    cafeId: 'vaan-vibes',
+    tableId: 'T27',
+    tableNumber: 27,
+    sessionToken: 'sess_t27_live',
+    customerName: 'Aditya Dave',
+    customerMobile: '9054112233',
+    items: [
+      {
+        id: 'hc-03-2',
+        menuItemId: 'hc-03',
+        name: 'Cappuccino',
+        category: 'hot-coffee',
+        price: 160,
+        quantity: 2,
+      },
+      {
+        id: 'to-03-2',
+        menuItemId: 'to-03',
+        name: 'Avocado Toast',
+        category: 'toastie',
+        price: 330,
+        quantity: 1,
+      },
+    ],
+    subtotal: 650,
+    tax: 0,
+    total: 650,
+    status: 'SERVED',
+    paymentStatus: 'PENDING',
+    sessionStatus: 'BILL_GENERATED',
+    billGenerated: true,
+    createdAt: new Date(Date.now() - 42 * 60 * 1000).toISOString(),
     updatedAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+  },
+  // Table 28: Yellow (Billed / Payment Pending)
+  {
+    id: 'VV-1010',
+    cafeId: 'vaan-vibes',
+    tableId: 'T28',
+    tableNumber: 28,
+    sessionToken: 'sess_t28_live',
+    customerName: 'Sunita Chawla',
+    customerMobile: '9879012345',
+    items: [
+      {
+        id: 'pz-03-1',
+        menuItemId: 'pz-03',
+        name: 'Truffle Mushroom Pizza',
+        category: 'pizza',
+        price: 520,
+        quantity: 2,
+      },
+      {
+        id: 'ds-01-1',
+        menuItemId: 'ds-01',
+        name: 'Warm Choco Lava Cake',
+        category: 'desserts',
+        price: 220,
+        quantity: 2,
+      },
+    ],
+    subtotal: 1480,
+    tax: 0,
+    total: 1480,
+    status: 'SERVED',
+    paymentStatus: 'PENDING',
+    sessionStatus: 'BILL_GENERATED',
+    billGenerated: true,
+    createdAt: new Date(Date.now() - 52 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
   },
 ];
 
@@ -129,7 +473,7 @@ if (!global.__VAAN_VIBES_STORE__) {
   global.__VAAN_VIBES_STORE__ = {
     tables: INITIAL_TABLES,
     orders: INITIAL_ORDERS,
-    orderCounter: 1003,
+    orderCounter: 1011,
   };
 }
 
@@ -480,5 +824,87 @@ export const CafeStore = {
       paymentStatus: order.paymentStatus,
       createdAt: order.createdAt,
     };
+  },
+
+  createTable(tableNumber: number, capacity: number = 4, section: string = 'A/C'): TableInfo {
+    const pad = tableNumber.toString().padStart(2, '0');
+    const id = `T${pad}`;
+    const token = `vv_sec_${id.toLowerCase()}_${(tableNumber * 7393 + 19283).toString(16)}`;
+    const newTable: TableInfo = {
+      id,
+      tableNumber,
+      name: `Table ${pad}`,
+      token,
+      qrCodeUrl: buildCustomerMenuUrl({ tableId: id, token }),
+      capacity,
+      status: 'AVAILABLE',
+      section,
+    };
+    store.tables.push(newTable);
+    store.tables.sort((a, b) => a.tableNumber - b.tableNumber);
+    return newTable;
+  },
+
+  deleteTable(tableId: string): boolean {
+    const idx = store.tables.findIndex(
+      (t) => t.id.toLowerCase() === tableId.toLowerCase() || t.tableNumber.toString() === tableId
+    );
+    if (idx === -1) return false;
+    store.tables.splice(idx, 1);
+    return true;
+  },
+
+  updateTableStatus(tableId: string, status: TableStatus): TableInfo | null {
+    const table = this.getTable(tableId);
+    if (!table) return null;
+    table.status = status;
+    if (status === 'OCCUPIED' && !table.seatedAt) {
+      table.seatedAt = new Date().toISOString();
+    } else if (status === 'AVAILABLE') {
+      table.seatedAt = undefined;
+    }
+    return table;
+  },
+
+  swipeTable(sourceTableId: string, destTableId: string) {
+    const source = this.getTable(sourceTableId);
+    const dest = this.getTable(destTableId);
+    if (!source || !dest) return null;
+
+    dest.status = source.status;
+    dest.seatedAt = source.seatedAt;
+    source.status = 'AVAILABLE';
+    source.seatedAt = undefined;
+
+    // Migrate all unclosed/pending orders for source table to dest table
+    const activeOrders = store.orders.filter(
+      (o) => o.tableId === source.id && o.paymentStatus !== 'PAID'
+    );
+    for (const ord of activeOrders) {
+      ord.tableId = dest.id;
+      ord.tableNumber = dest.tableNumber;
+      ord.updatedAt = new Date().toISOString();
+    }
+
+    return { source, dest, activeOrders };
+  },
+
+  clearTable(tableId: string): boolean {
+    const table = this.getTable(tableId);
+    if (!table) return false;
+    table.status = 'AVAILABLE';
+    table.seatedAt = undefined;
+
+    // Mark pending orders for table as paid/closed
+    const tableOrders = store.orders.filter(
+      (o) => o.tableId === table.id && o.paymentStatus !== 'PAID'
+    );
+    for (const ord of tableOrders) {
+      ord.paymentStatus = 'PAID';
+      ord.sessionStatus = 'CLOSED';
+      ord.status = 'COMPLETED';
+      ord.updatedAt = new Date().toISOString();
+    }
+    return true;
   },
 };

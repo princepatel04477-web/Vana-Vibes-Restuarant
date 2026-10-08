@@ -63,4 +63,10 @@ export const tablesApi = {
       body: JSON.stringify({ sourceTableId, destinationTableId }),
     });
   },
+
+  clearTable: async (tableId: string): Promise<{ success: boolean; message: string }> => {
+    return apiClient<{ success: boolean; message: string }>(`/tables/${tableId}/clear`, {
+      method: 'POST',
+    });
+  },
 };

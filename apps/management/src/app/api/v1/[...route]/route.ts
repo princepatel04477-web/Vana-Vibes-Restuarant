@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import QRCode from 'qrcode';
 import { ServerBackend, createToken } from '@/lib/server-backend';
 import { CafeStore } from '@/lib/cafe-store';
 import { TableStatus, OrderStatus } from '@/types/cafe';
@@ -41,21 +42,72 @@ export async function GET(
     return NextResponse.json(chefs, { headers: corsHeaders() });
   }
 
-  // 3. /api/v1/tables/:id/standee
+  // 3a. /api/v1/tables/:id/qr -> Direct PNG stream
+  if (route[0] === 'tables' && route.length === 3 && route[2] === 'qr') {
+    const tableId = route[1];
+    const table = CafeStore.getTable(tableId);
+    const frontendUrl = searchParams.get('frontend_url');
+    const scanUrl = frontendUrl
+      ? `${frontendUrl.replace(/\/+$/, '')}/cafe/van-vibes?table=${table?.id || tableId}&token=${table?.token || ''}`
+      : (table?.qrCodeUrl || `https://management-rho-seven.vercel.app/cafe/van-vibes?table=${tableId}`);
+
+    try {
+      const buffer = await QRCode.toBuffer(scanUrl, {
+        type: 'png',
+        width: 380,
+        margin: 2,
+        color: {
+          dark: '#18312B',
+          light: '#FFFFFF',
+        },
+      });
+      return new NextResponse(new Uint8Array(buffer), {
+        headers: {
+          'Content-Type': 'image/png',
+          'Cache-Control': 'public, max-age=86400, s-maxage=86400',
+          ...corsHeaders(),
+        },
+      });
+    } catch (err) {
+      console.error('QR code generation failed:', err);
+      return NextResponse.json({ detail: 'Failed to generate QR code' }, { status: 500, headers: corsHeaders() });
+    }
+  }
+
+  // 3b. /api/v1/tables/:id/standee
   if (route[0] === 'tables' && route.length === 3 && route[2] === 'standee') {
     const tableId = route[1];
     const table = CafeStore.getTable(tableId);
     if (!table) {
       return NextResponse.json({ detail: 'Table not found' }, { status: 404, headers: corsHeaders() });
     }
+    const frontendUrl = searchParams.get('frontend_url');
+    const scanUrl = frontendUrl
+      ? `${frontendUrl.replace(/\/+$/, '')}/cafe/van-vibes?table=${table.id}&token=${table.token}`
+      : table.qrCodeUrl;
+
+    let qrImageUrl = '';
+    try {
+      qrImageUrl = await QRCode.toDataURL(scanUrl, {
+        width: 480,
+        margin: 2,
+        color: {
+          dark: '#18312B',
+          light: '#FFFFFF',
+        },
+      });
+    } catch {
+      qrImageUrl = `/api/v1/tables/${table.id}/qr`;
+    }
+
     return NextResponse.json(
       {
         table_id: table.id,
         table_number: table.tableNumber,
         name: table.name,
         capacity: table.capacity,
-        scan_url: table.qrCodeUrl,
-        qr_image_url: `/api/qr/image?table=${table.id}`,
+        scan_url: scanUrl,
+        qr_image_url: qrImageUrl,
       },
       { headers: corsHeaders() }
     );
@@ -374,23 +426,47 @@ export async function POST(
   if (path === 'tables/swipe') {
     const sourceTableId = typeof body.sourceTableId === 'string' ? body.sourceTableId : '';
     const destinationTableId = typeof body.destinationTableId === 'string' ? body.destinationTableId : '';
-    const source = CafeStore.getTable(sourceTableId);
-    const dest = CafeStore.getTable(destinationTableId);
-    if (!source || !dest) {
-      return NextResponse.json({ detail: 'Table not found' }, { status: 404, headers: corsHeaders() });
+    const res = ServerBackend.swipeTable(sourceTableId, destinationTableId);
+    if (!res) {
+      return NextResponse.json({ detail: 'Table not found or invalid transfer' }, { status: 400, headers: corsHeaders() });
     }
-    dest.status = source.status;
-    source.status = 'AVAILABLE';
     return NextResponse.json(
       {
         message: 'Table swapped successfully',
-        sessionId: `sess_${dest.id}_${Date.now()}`,
-        sourceTable: source,
-        destinationTable: dest,
-        orderIds: [],
+        sessionId: `sess_${res.dest.id}_${Date.now()}`,
+        sourceTable: res.source,
+        destinationTable: res.dest,
+        orderIds: res.activeOrders.map((o) => o.id),
       },
       { headers: corsHeaders() }
     );
+  }
+
+  // 14. /api/v1/tables (Create Table)
+  if (path === 'tables') {
+    const num = Number(body.tableNumber || body.table_number);
+    const cap = Number(body.capacity || 4);
+    const sec = String(body.section || 'A/C');
+    if (!num || isNaN(num)) {
+      return NextResponse.json({ detail: 'Valid table number is required' }, { status: 400, headers: corsHeaders() });
+    }
+    const created = ServerBackend.createTable(num, cap, sec);
+    return NextResponse.json(created, { status: 201, headers: corsHeaders() });
+  }
+
+  // 15. /api/v1/tables/:id/clear (Clear / Free Table)
+  if (route[0] === 'tables' && route.length === 3 && route[2] === 'clear') {
+    const ok = ServerBackend.clearTable(route[1]);
+    return NextResponse.json({ success: ok, message: 'Table cleared' }, { headers: corsHeaders() });
+  }
+
+  // 16. /api/v1/tables/:id/occupy
+  if (route[0] === 'tables' && route.length === 3 && route[2] === 'occupy') {
+    const table = ServerBackend.updateTableStatus(route[1], 'OCCUPIED');
+    if (!table) {
+      return NextResponse.json({ detail: 'Table not found' }, { status: 404, headers: corsHeaders() });
+    }
+    return NextResponse.json(table, { headers: corsHeaders() });
   }
 
   return NextResponse.json({ detail: `Route POST /api/v1/${path} not found` }, { status: 404, headers: corsHeaders() });
@@ -479,7 +555,16 @@ export async function DELETE(
   const { route } = await context.params;
   const path = route.join('/');
 
-  // /api/v1/auth/chefs/:id
+  // 1. /api/v1/tables/:id (Delete Table)
+  if (route[0] === 'tables' && route.length === 2) {
+    const ok = ServerBackend.deleteTable(route[1]);
+    if (!ok) {
+      return NextResponse.json({ detail: 'Table not found' }, { status: 404, headers: corsHeaders() });
+    }
+    return NextResponse.json({ message: 'Table deleted successfully', id: route[1] }, { headers: corsHeaders() });
+  }
+
+  // 2. /api/v1/auth/chefs/:id
   if (route[0] === 'auth' && route[1] === 'chefs' && route.length === 3) {
     const ok = ServerBackend.deleteChef(route[2]);
     if (!ok) {

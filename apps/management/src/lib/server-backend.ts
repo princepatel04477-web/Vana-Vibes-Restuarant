@@ -294,11 +294,24 @@ export const ServerBackend = {
     return CafeStore.getAllTables();
   },
 
+  createTable(tableNumber: number, capacity: number = 4, section: string = 'A/C'): TableInfo {
+    return CafeStore.createTable(tableNumber, capacity, section);
+  },
+
+  deleteTable(tableId: string): boolean {
+    return CafeStore.deleteTable(tableId);
+  },
+
   updateTableStatus(tableId: string, status: TableStatus): TableInfo | null {
-    const table = CafeStore.getTable(tableId);
-    if (!table) return null;
-    table.status = status;
-    return table;
+    return CafeStore.updateTableStatus(tableId, status);
+  },
+
+  swipeTable(sourceTableId: string, destTableId: string) {
+    return CafeStore.swipeTable(sourceTableId, destTableId);
+  },
+
+  clearTable(tableId: string): boolean {
+    return CafeStore.clearTable(tableId);
   },
 
   // --- ORDERS ---

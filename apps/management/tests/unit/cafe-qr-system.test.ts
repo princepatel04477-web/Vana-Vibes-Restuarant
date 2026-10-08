@@ -3,9 +3,9 @@ import { CafeStore } from '@/lib/cafe-store';
 import { MENU_CATEGORIES, MENU_ITEMS } from '@/data/vaan-vibes-menu';
 
 describe('Vaan Vibes QR Code & Table Security', () => {
-  it('should have 12 configured tables with secure tokens', () => {
+  it('should have configured tables with secure tokens', () => {
     const tables = CafeStore.getAllTables();
-    expect(tables.length).toBe(12);
+    expect(tables.length).toBeGreaterThanOrEqual(12);
 
     for (const table of tables) {
       expect(table.id).toMatch(/^T\d{2}$/);

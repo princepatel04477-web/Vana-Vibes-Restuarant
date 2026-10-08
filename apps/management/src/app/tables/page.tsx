@@ -3,9 +3,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { tablesApi } from '@/api/tables';
-import { TableInfo } from '@/types/cafe';
+import { ordersApi } from '@/api/orders';
+import { TableInfo, Order } from '@/types/cafe';
 import { CustomSelect } from '@/components/ui/CustomSelect';
 import { wsManager } from '@/services/websocket/WebSocketManager';
+import { TableFloorPlan } from '@/features/tables/components/TableFloorPlan';
+import { QrCodePreview } from '@/components/ui/QrCodePreview';
 import {
   ExternalLink,
   Printer,
@@ -18,6 +21,7 @@ import {
   ArrowRightLeft,
   CheckCircle2,
   Users,
+  LayoutGrid,
 } from 'lucide-react';
 import {
   buildCustomerMenuUrl,
@@ -27,6 +31,8 @@ import {
 
 export default function TablesPage() {
   const [tables, setTables] = useState<TableInfo[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [activeView, setActiveView] = useState<'FLOOR_PLAN' | 'STANDEES'>('FLOOR_PLAN');
   const [selectedTable, setSelectedTable] = useState<TableInfo | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -390,17 +396,23 @@ export default function TablesPage() {
     }
   };
 
-  const fetchTables = useCallback(async () => {
+  const fetchAllData = useCallback(async () => {
     try {
-      const data = await tablesApi.getTables();
+      const [data, fetchedOrders] = await Promise.all([
+        tablesApi.getTables(),
+        ordersApi.getOrders().catch(() => []),
+      ]);
       setTables(data);
+      setOrders(fetchedOrders);
     } catch (err) {
-      console.error('Failed to load tables:', err);
+      console.error('Failed to load tables and orders:', err);
     }
   }, []);
 
+  const fetchTables = fetchAllData;
+
   useEffect(() => {
-    fetchTables();
+    fetchAllData();
 
     const handleStatusUpdate = (data: { tableId?: string; table_id?: string; status: string }) => {
       const id = data.tableId || data.table_id;
@@ -410,16 +422,19 @@ export default function TablesPage() {
       );
     };
 
-    const handleSessionUpdate = () => {
-      fetchTables();
+    const handleDataUpdate = () => {
+      fetchAllData();
     };
 
     const unsubStatus = wsManager.on('TABLE_STATUS_UPDATED', handleStatusUpdate);
-    const unsubSession = wsManager.on('DINING_SESSION_OPENED', handleSessionUpdate);
-    const unsubClosed = wsManager.on('DINING_SESSION_CLOSED', handleSessionUpdate);
-    const unsubTableCreated = wsManager.on('TABLE_CREATED', handleSessionUpdate);
-    const unsubTableDeleted = wsManager.on('TABLE_DELETED', handleSessionUpdate);
-    const unsubTransferred = wsManager.on('TABLE_TRANSFERRED', handleSessionUpdate);
+    const unsubSession = wsManager.on('DINING_SESSION_OPENED', handleDataUpdate);
+    const unsubClosed = wsManager.on('DINING_SESSION_CLOSED', handleDataUpdate);
+    const unsubTableCreated = wsManager.on('TABLE_CREATED', handleDataUpdate);
+    const unsubTableDeleted = wsManager.on('TABLE_DELETED', handleDataUpdate);
+    const unsubTransferred = wsManager.on('TABLE_TRANSFERRED', handleDataUpdate);
+    const unsubOrderPlaced = wsManager.on('ORDER_PLACED', handleDataUpdate);
+    const unsubOrderCreated = wsManager.on('ORDER_CREATED', handleDataUpdate);
+    const unsubOrderUpdated = wsManager.on('ORDER_STATUS_UPDATED', handleDataUpdate);
 
     return () => {
       unsubStatus();
@@ -428,8 +443,11 @@ export default function TablesPage() {
       unsubTableCreated();
       unsubTableDeleted();
       unsubTransferred();
+      unsubOrderPlaced();
+      unsubOrderCreated();
+      unsubOrderUpdated();
     };
-  }, [fetchTables]);
+  }, [fetchAllData]);
 
   const handleCopyLink = async (table: TableInfo) => {
     const url = buildCustomerMenuUrl({
@@ -459,12 +477,10 @@ export default function TablesPage() {
     }
   };
 
-  const handleOpenSwipeModal = () => {
+  const handleOpenSwipeModal = (preselectedSourceId?: string) => {
     setSwipeError(null);
-    const availableSources = tables.filter(
-      (t) => t.status === 'OCCUPIED' && t.activeSession && t.activeSession.status === 'OPEN'
-    );
-    const firstSource = availableSources[0]?.id || '';
+    const availableSources = tables.filter((t) => t.status === 'OCCUPIED');
+    const firstSource = preselectedSourceId || availableSources[0]?.id || '';
     setSourceTableId(firstSource);
 
     const availableDests = tables.filter(
@@ -499,8 +515,8 @@ export default function TablesPage() {
     const srcTbl = tables.find((t) => t.id === sourceTableId);
     const dstTbl = tables.find((t) => t.id === destTableId);
 
-    if (!srcTbl || srcTbl.status !== 'OCCUPIED' || !srcTbl.activeSession) {
-      setSwipeError(`Source Table ${srcTbl?.tableNumber || ''} has no active dining session.`);
+    if (!srcTbl || srcTbl.status !== 'OCCUPIED') {
+      setSwipeError(`Source Table ${srcTbl?.tableNumber || ''} is not occupied.`);
       return;
     }
 
@@ -586,15 +602,44 @@ export default function TablesPage() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-xl sm:text-2xl font-black text-brand-green tracking-tight">
-              Table QR Standee Management
+              {activeView === 'FLOOR_PLAN' ? 'All Table Dashboard' : 'Table QR Standees & Print'}
             </h1>
             <p className="text-xs text-brand-green/70 mt-0.5">
-              Authenticated dining tables with backend-generated cryptographic QR tokens.
+              {activeView === 'FLOOR_PLAN'
+                ? 'Interactive dining table floor plan with live dining statuses, order tracking, and quick settlement.'
+                : 'Authenticated dining tables with backend-generated cryptographic QR tokens.'}
             </p>
           </div>
 
-          {/* Action Buttons: Add Table & Swipe Table */}
+          {/* Mode Switcher Tabs & Action Buttons */}
           <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center bg-white p-1 rounded-2xl border border-brand-beige-dark shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setActiveView('FLOOR_PLAN')}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  activeView === 'FLOOR_PLAN'
+                    ? 'bg-brand-green text-brand-beige shadow-xs'
+                    : 'text-brand-green/70 hover:text-brand-green hover:bg-brand-beige-light'
+                }`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Floor Plan</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveView('STANDEES')}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  activeView === 'STANDEES'
+                    ? 'bg-brand-green text-brand-beige shadow-xs'
+                    : 'text-brand-green/70 hover:text-brand-green hover:bg-brand-beige-light'
+                }`}
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>QR Standees</span>
+              </button>
+            </div>
+
             <button
               type="button"
               onClick={() => {
@@ -602,17 +647,17 @@ export default function TablesPage() {
                 setAddTableError(null);
                 setNewTableNumber('');
               }}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-brand-green hover:bg-brand-green-hover text-brand-beige text-xs font-bold transition-all shadow-xs active:scale-95 cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand-green hover:bg-brand-green-hover text-brand-beige text-xs font-bold transition-all shadow-xs active:scale-95 cursor-pointer"
             >
               <span>+ Add Table</span>
             </button>
             <button
               type="button"
-              onClick={handleOpenSwipeModal}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-white hover:bg-brand-beige text-brand-green border border-brand-beige-dark text-xs font-bold transition-all shadow-xs active:scale-95 cursor-pointer"
+              onClick={() => handleOpenSwipeModal()}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-brand-beige text-brand-green border border-brand-beige-dark text-xs font-bold transition-all shadow-xs active:scale-95 cursor-pointer"
             >
               <ArrowRightLeft className="w-3.5 h-3.5 text-brand-gold" />
-              <span>Swipe Table</span>
+              <span>Transfer</span>
             </button>
           </div>
         </div>
@@ -634,152 +679,170 @@ export default function TablesPage() {
           </div>
         )}
 
-        {/* Tables Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {tables.map((table) => (
-            <div
-              key={table.id}
-              className={`bg-white rounded-2xl border border-brand-beige-dark p-4 shadow-xs hover:shadow-md transition-all flex flex-col justify-between ${
-                openMenuTableId === table.id ? 'relative z-30' : 'relative z-0'
-              }`}
-            >
-              <div>
-                <div className="flex items-center justify-between pb-3 border-b border-brand-beige-dark/50">
-                  <div className="flex items-center gap-2">
-                    <span className="w-8 h-8 rounded-full bg-brand-green text-brand-beige font-black text-xs flex items-center justify-center font-mono shrink-0">
-                      {table.tableNumber.toString().padStart(2, '0')}
-                    </span>
-                    <div>
-                      <h3 className="font-extrabold text-sm text-brand-green leading-tight">
-                        Table {table.tableNumber.toString().padStart(2, '0')}
-                      </h3>
-                      <span
-                        className={`text-[10px] uppercase font-black px-2 py-0.5 rounded border inline-block mt-0.5 ${
-                          table.status === 'OCCUPIED'
-                            ? 'bg-amber-50 text-amber-800 border-amber-200'
-                            : 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                        }`}
-                      >
-                        {table.status}
+        {/* Main Content: Table Floor Plan Dashboard OR Standees Cards Grid */}
+        {activeView === 'FLOOR_PLAN' ? (
+          <TableFloorPlan
+            tables={tables}
+            orders={orders}
+            onRefresh={fetchAllData}
+            onOpenSwipeModal={handleOpenSwipeModal}
+            onOpenAddModal={() => {
+              setIsAddModalOpen(true);
+              setAddTableError(null);
+              setNewTableNumber('');
+            }}
+            qrBaseUrl={qrBaseUrl}
+          />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {tables.map((table) => (
+              <div
+                key={table.id}
+                className={`bg-white rounded-2xl border border-brand-beige-dark p-4 shadow-xs hover:shadow-md transition-all flex flex-col justify-between ${
+                  openMenuTableId === table.id ? 'relative z-30' : 'relative z-0'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between pb-3 border-b border-brand-beige-dark/50">
+                    <div className="flex items-center gap-2">
+                      <span className="w-8 h-8 rounded-full bg-brand-green text-brand-beige font-black text-xs flex items-center justify-center font-mono shrink-0">
+                        {table.tableNumber.toString().padStart(2, '0')}
                       </span>
+                      <div>
+                        <h3 className="font-extrabold text-sm text-brand-green leading-tight">
+                          Table {table.tableNumber.toString().padStart(2, '0')}
+                        </h3>
+                        <span
+                          className={`text-[10px] uppercase font-black px-2 py-0.5 rounded border inline-block mt-0.5 ${
+                            table.status === 'OCCUPIED'
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
+                              : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          }`}
+                        >
+                          {table.status}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 3-dots Menu Button */}
+                    <div
+                      className={`relative ${openMenuTableId === table.id ? 'z-40' : 'z-10'}`}
+                      data-table-menu
+                    >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenMenuTableId((prev) => (prev === table.id ? null : table.id));
+                        }}
+                        className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                          openMenuTableId === table.id
+                            ? 'bg-brand-beige text-brand-green ring-1 ring-brand-beige-dark'
+                            : 'hover:bg-brand-beige text-brand-green/60 hover:text-brand-green'
+                        }`}
+                        aria-label={`Options for Table ${table.tableNumber}`}
+                      >
+                        <MoreVertical className="w-4 h-4 pointer-events-none" />
+                      </button>
+
+                      {openMenuTableId === table.id && (
+                        <div
+                          className="absolute right-0 top-9 w-44 bg-white rounded-xl shadow-xl border border-brand-beige-dark p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {/* Toggle Status: Available <-> Occupied */}
+                          <button
+                            type="button"
+                            disabled={updatingTableId === table.id}
+                            onClick={() => handleToggleStatus(table)}
+                            className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-colors text-left cursor-pointer group disabled:opacity-50 ${table.status === 'OCCUPIED' ? 'text-emerald-700 hover:bg-emerald-50' : 'text-amber-700 hover:bg-amber-50'}`}
+                          >
+                            {table.status === 'OCCUPIED' ? (
+                              <>
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 group-hover:scale-110 transition-transform shrink-0" />
+                                <span>Set to Available</span>
+                              </>
+                            ) : (
+                              <>
+                                <Users className="w-3.5 h-3.5 text-amber-600 group-hover:scale-110 transition-transform shrink-0" />
+                                <span>Set to Occupied</span>
+                              </>
+                            )}
+                          </button>
+
+                          <div className="my-1 border-t border-brand-beige-dark/50" />
+
+                          {/* Delete Table Option */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOpenMenuTableId(null);
+                              setTableToDelete(table);
+                              setDeleteError(null);
+                            }}
+                            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 transition-colors text-left cursor-pointer group"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-red-500 group-hover:scale-110 transition-transform shrink-0" />
+                            <span>Delete Table</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {/* 3-dots Menu Button */}
-                  <div
-                    className={`relative ${openMenuTableId === table.id ? 'z-40' : 'z-10'}`}
-                    data-table-menu
+                  {/* QR Code Preview Visual using client-side QrCodePreview */}
+                  <div className="my-4 p-4 rounded-xl bg-brand-beige-light flex flex-col items-center justify-center border border-dashed border-brand-beige-dark">
+                    <div className="w-28 h-28 bg-white p-2 rounded-xl shadow-2xs border border-brand-beige-dark flex items-center justify-center overflow-hidden">
+                      <QrCodePreview
+                        value={buildCustomerMenuUrl({
+                          tableId: table.id,
+                          token: table.token,
+                          customBaseUrl: qrBaseUrl,
+                        })}
+                        tableNumber={table.tableNumber}
+                        size={112}
+                        fallbackUrl={tablesApi.getQrCodeUrl(table.id, qrBaseUrl)}
+                      />
+                    </div>
+                    <span className="text-[10px] text-brand-green/60 mt-2 font-mono">
+                      Token: {table.token.substring(0, 14)}...
+                    </span>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="pt-2 border-t border-brand-beige-dark/40 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleCopyLink(table)}
+                    className="flex-1 py-2 px-3 rounded-xl bg-brand-beige-light hover:bg-brand-beige text-brand-green font-bold text-xs border border-brand-beige-dark flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                   >
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setOpenMenuTableId((prev) => (prev === table.id ? null : table.id));
-                      }}
-                      className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                        openMenuTableId === table.id
-                          ? 'bg-brand-beige text-brand-green ring-1 ring-brand-beige-dark'
-                          : 'hover:bg-brand-beige text-brand-green/60 hover:text-brand-green'
-                      }`}
-                      aria-label={`Options for Table ${table.tableNumber}`}
-                    >
-                      <MoreVertical className="w-4 h-4 pointer-events-none" />
-                    </button>
-
-                    {openMenuTableId === table.id && (
-                      <div
-                        className="absolute right-0 top-9 w-44 bg-white rounded-xl shadow-xl border border-brand-beige-dark p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {/* Toggle Status: Available <-> Occupied */}
-                        <button
-                          type="button"
-                          disabled={updatingTableId === table.id}
-                          onClick={() => handleToggleStatus(table)}
-                          className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-colors text-left cursor-pointer group disabled:opacity-50 ${table.status === "OCCUPIED" ? "text-emerald-700 hover:bg-emerald-50" : "text-amber-700 hover:bg-amber-50"}`}
-                        >
-                          {table.status === 'OCCUPIED' ? (
-                            <>
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 group-hover:scale-110 transition-transform shrink-0" />
-                              <span>Set to Available</span>
-                            </>
-                          ) : (
-                            <>
-                              <Users className="w-3.5 h-3.5 text-amber-600 group-hover:scale-110 transition-transform shrink-0" />
-                              <span>Set to Occupied</span>
-                            </>
-                          )}
-                        </button>
-
-                        <div className="my-1 border-t border-brand-beige-dark/50" />
-
-                        {/* Delete Table Option */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setOpenMenuTableId(null);
-                            setTableToDelete(table);
-                            setDeleteError(null);
-                          }}
-                          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 transition-colors text-left cursor-pointer group"
-                        >
-                          <Trash2 className="w-3.5 h-3.5 text-red-500 group-hover:scale-110 transition-transform shrink-0" />
-                          <span>Delete Table</span>
-                        </button>
-                      </div>
+                    {copiedId === table.id ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-brand-green/60" />
+                        <span>Copy QR Link</span>
+                      </>
                     )}
-                  </div>
-                </div>
+                  </button>
 
-                {/* QR Code Preview Visual generated by FastAPI backend */}
-                <div className="my-4 p-4 rounded-xl bg-brand-beige-light flex flex-col items-center justify-center border border-dashed border-brand-beige-dark">
-                  <div className="w-28 h-28 bg-white p-2 rounded-xl shadow-2xs border border-brand-beige-dark flex items-center justify-center overflow-hidden">
-                    {/* Backend-generated QR PNG stream */}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={tablesApi.getQrCodeUrl(table.id, qrBaseUrl)}
-                      alt={`Table ${table.tableNumber} QR`}
-                      className="w-full h-full object-contain"
-                    />
-                  </div>
-                  <span className="text-[10px] text-brand-green/60 mt-2 font-mono">
-                    Token: {table.token.substring(0, 14)}...
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTable(table)}
+                    className="p-2 rounded-xl bg-brand-green hover:bg-brand-green-hover text-brand-beige transition-colors cursor-pointer"
+                    title="View Standee"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
-
-              {/* Action Buttons */}
-              <div className="pt-2 border-t border-brand-beige-dark/40 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleCopyLink(table)}
-                  className="flex-1 py-2 px-3 rounded-xl bg-brand-beige-light hover:bg-brand-beige text-brand-green font-bold text-xs border border-brand-beige-dark flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                >
-                  {copiedId === table.id ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Copied!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5 text-brand-green/60" />
-                      <span>Copy QR Link</span>
-                    </>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedTable(table)}
-                  className="p-2 rounded-xl bg-brand-green hover:bg-brand-green-hover text-brand-beige transition-colors cursor-pointer"
-                  title="View Standee"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Add Table Custom Modal */}
@@ -883,13 +946,14 @@ export default function TablesPage() {
             </div>
 
             <div className="p-6 bg-brand-beige-light rounded-2xl border-2 border-dashed border-brand-green/30 flex flex-col items-center">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                id="standee-modal-qr-img"
-                src={tablesApi.getQrCodeUrl(selectedTable.id, qrBaseUrl)}
-                alt={`Table ${selectedTable.tableNumber} Official QR`}
-                className="w-40 h-40 object-contain rounded-xl bg-white p-2 shadow-xs border border-brand-beige-dark print:w-44 print:h-44 print:shadow-none"
-              />
+              <div className="w-40 h-40 rounded-xl bg-white p-2 shadow-xs border border-brand-beige-dark print:w-44 print:h-44 print:shadow-none flex items-center justify-center overflow-hidden">
+                <QrCodePreview
+                  value={buildCustomerMenuUrl({ tableId: selectedTable.id, token: selectedTable.token, customBaseUrl: qrBaseUrl })}
+                  tableNumber={selectedTable.tableNumber}
+                  size={160}
+                  fallbackUrl={tablesApi.getQrCodeUrl(selectedTable.id, qrBaseUrl)}
+                />
+              </div>
               <p className="text-xs font-black text-brand-green mt-3 tracking-wider uppercase font-mono">
                 {selectedTable.id} • VAAN VIBES
               </p>
