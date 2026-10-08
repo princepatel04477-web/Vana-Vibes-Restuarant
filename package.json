@@ -17,7 +17,10 @@
     "test:backend": "backend\\.venv\\Scripts\\pytest.exe backend/tests",
     "test:frontend": "pnpm --filter van-vibes-frontend test",
     "test:management": "pnpm --filter vaan-vibes-management test",
-    "test": "pnpm test:frontend && pnpm test:management"
+    "test": "pnpm test:frontend && pnpm test:management",
+    "build:management": "pnpm --filter vaan-vibes-management build",
+    "build:frontend": "pnpm --filter van-vibes-frontend build",
+    "build": "pnpm build:management"
   },
   "dependencies": {
     "@types/canvas-confetti": "^1.9.0",
