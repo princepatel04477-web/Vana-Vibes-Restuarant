@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import QRCode from 'qrcode';
 import { ServerBackend, createToken } from '@/lib/server-backend';
 import { CafeStore } from '@/lib/cafe-store';
+import { MenuError, MenuStore } from '@/lib/menu-store';
 import { TableStatus, OrderStatus, TableInfo, CartItem } from '@/types/cafe';
 import { ExportError, ExportRequest, generateExport, previewExport } from '@/lib/export/build-export';
 
@@ -36,6 +37,54 @@ function requireAdmin(request: NextRequest) {
     return { error: NextResponse.json({ detail: 'Only admins can do this' }, { status: 403, headers: corsHeaders() }) };
   }
   return { user };
+}
+
+function menuErrorResponse(err: unknown) {
+  if (err instanceof MenuError) {
+    return NextResponse.json(
+      { detail: err.message, fieldErrors: err.fieldErrors },
+      { status: err.status, headers: corsHeaders() }
+    );
+  }
+  throw err;
+}
+
+/** The order a billing route points at (`billing/:orderId` or `billing/sessions/:sessionId`). */
+async function resolveBillOrderId(route: string[]): Promise<string | undefined> {
+  if (route[1] === 'sessions') {
+    return route[2] ? CafeStore.getSessionOrderId(route[2]) : undefined;
+  }
+  return route[1];
+}
+
+async function settleBill(orderId: string, body: Record<string, unknown>) {
+  const method = typeof body.paymentMethod === 'string' ? body.paymentMethod : typeof body.payment_method === 'string' ? body.payment_method : 'CASH';
+  const settled = await CafeStore.settlePayment(orderId, method);
+  if (!settled.success) {
+    return NextResponse.json({ detail: settled.error || 'Order not found' }, { status: 404, headers: corsHeaders() });
+  }
+  const bill = await CafeStore.getBill(orderId);
+  const invoice = {
+    id: `INV-${Date.now()}`,
+    orderId,
+    diningSessionId: bill?.diningSessionId,
+    invoiceNumber: bill?.billNumber || `BILL-${orderId.replace('VV-', '')}`,
+    total: bill?.total ?? settled.order?.total ?? 0,
+    subtotal: bill?.subtotal ?? settled.order?.subtotal ?? 0,
+    taxAmount: bill?.taxAmount ?? settled.order?.tax ?? 0,
+    discountPercentage: bill?.discountPercentage || 0,
+    discountAmount: bill?.discountAmount || 0,
+    extraCharge: bill?.extraCharge || 0,
+    roundOff: bill?.roundOff || 0,
+    cgstRate: 0,
+    cgstAmount: 0,
+    sgstRate: 0,
+    sgstAmount: 0,
+    paymentMethod: method,
+    paymentStatus: 'PAID',
+    createdAt: new Date().toISOString(),
+  };
+  return NextResponse.json(invoice, { headers: corsHeaders() });
 }
 
 export async function OPTIONS() {
@@ -163,13 +212,13 @@ export async function GET(
   if (path === 'menu') {
     const category = searchParams.get('category') || undefined;
     const search = searchParams.get('search') || undefined;
-    const menuItems = ServerBackend.getMenuItems(category, search);
+    const menuItems = await ServerBackend.getMenuItems(category, search);
     return NextResponse.json(menuItems, { headers: corsHeaders() });
   }
 
   // 8. /api/v1/categories
   if (path === 'categories') {
-    const categories = ServerBackend.getCategories();
+    const categories = await ServerBackend.getCategories();
     return NextResponse.json(categories, { headers: corsHeaders() });
   }
 
@@ -228,9 +277,14 @@ export async function GET(
     return NextResponse.json(pending, { headers: corsHeaders() });
   }
 
-  // 12. /api/v1/billing/:orderId
-  if (route[0] === 'billing' && route.length === 2 && !['ledger', 'pending', 'sessions'].includes(route[1])) {
-    const bill = await CafeStore.generateBill(route[1]);
+  // 12. /api/v1/billing/:orderId and /api/v1/billing/sessions/:sessionId (view only)
+  if (
+    route[0] === 'billing' &&
+    ((route.length === 2 && !['ledger', 'pending', 'sessions'].includes(route[1])) ||
+      (route.length === 3 && route[1] === 'sessions'))
+  ) {
+    const orderId = await resolveBillOrderId(route);
+    const bill = orderId ? await CafeStore.getBill(orderId) : null;
     if (!bill) {
       return NextResponse.json({ detail: 'Order receipt not found' }, { status: 404, headers: corsHeaders() });
     }
@@ -415,33 +469,49 @@ export async function POST(
     );
   }
 
-  // 11. /api/v1/billing/:orderId/generate
-  if (route[0] === 'billing' && route.length === 3 && route[2] === 'generate') {
-    const discount = Number(body.discount_percentage || body.discountPercentage || 0);
-    const bill = await CafeStore.generateBill(route[1], discount);
+  // 11/12. /api/v1/billing/:orderId/(generate|settle) and /api/v1/billing/sessions/:sessionId/(generate|settle)
+  const billAction = route[0] === 'billing' ? route[route.length - 1] : '';
+  if (
+    (billAction === 'generate' || billAction === 'settle') &&
+    (route.length === 3 || (route.length === 4 && route[1] === 'sessions'))
+  ) {
+    const orderId = await resolveBillOrderId(route);
+    if (!orderId) {
+      return NextResponse.json({ detail: 'No orders found for this bill' }, { status: 404, headers: corsHeaders() });
+    }
+    if (billAction === 'settle') return settleBill(orderId, body);
+
+    const discount = Number(body.discount_percentage ?? body.discountPercentage ?? 0);
+    const extraCharge = Number(body.extra_charge ?? body.extraCharge ?? 0);
+    const bill = await CafeStore.generateBill(orderId, discount, extraCharge);
+    if (!bill) {
+      return NextResponse.json({ detail: 'No orders found for this bill' }, { status: 404, headers: corsHeaders() });
+    }
     return NextResponse.json(bill, { headers: corsHeaders() });
   }
 
-  // 12. /api/v1/billing/:orderId/settle
-  if (route[0] === 'billing' && route.length === 3 && route[2] === 'settle') {
-    const method = typeof body.paymentMethod === 'string' ? body.paymentMethod : typeof body.payment_method === 'string' ? body.payment_method : 'CASH';
-    const settled = await CafeStore.settlePayment(route[1], method);
-    const invoice = {
-      id: `INV-${Date.now()}`,
-      orderId: route[1],
-      invoiceNumber: `BILL-${route[1].replace('VV-', '')}`,
-      total: settled.order?.total || 0,
-      subtotal: settled.order?.subtotal || 0,
-      taxAmount: settled.order?.tax || 0,
-      cgstRate: 0,
-      cgstAmount: 0,
-      sgstRate: 0,
-      sgstAmount: 0,
-      paymentMethod: method,
-      paymentStatus: 'PAID',
-      createdAt: new Date().toISOString(),
-    };
-    return NextResponse.json(invoice, { headers: corsHeaders() });
+  // 12b. /api/v1/menu (Admin adds a dish)
+  if (path === 'menu') {
+    const auth = requireAdmin(request);
+    if (auth.error) return auth.error;
+    try {
+      const item = await MenuStore.createItem(body);
+      return NextResponse.json(item, { status: 201, headers: corsHeaders() });
+    } catch (err) {
+      return menuErrorResponse(err);
+    }
+  }
+
+  // 12c. /api/v1/categories (Admin adds a category)
+  if (path === 'categories') {
+    const auth = requireAdmin(request);
+    if (auth.error) return auth.error;
+    try {
+      const category = await MenuStore.createCategory(body);
+      return NextResponse.json(category, { status: 201, headers: corsHeaders() });
+    } catch (err) {
+      return menuErrorResponse(err);
+    }
   }
 
   // 13. /api/v1/tables/swipe
@@ -492,7 +562,7 @@ export async function POST(
       return NextResponse.json({ detail: 'Add at least one item' }, { status: 400, headers: corsHeaders() });
     }
 
-    const menu = ServerBackend.getMenuItems();
+    const menu = await ServerBackend.getMenuItems();
     const items: CartItem[] = [];
     for (const raw of rawItems) {
       const menuItem = menu.find((m) => m.id === raw.menuItemId);
@@ -598,6 +668,18 @@ export async function PUT(
     body = (await request.json()) as Record<string, unknown>;
   } catch {}
 
+  // /api/v1/menu/:id (Admin edits a dish)
+  if (route[0] === 'menu' && route.length === 2) {
+    const auth = requireAdmin(request);
+    if (auth.error) return auth.error;
+    try {
+      const item = await MenuStore.updateItem(route[1], body);
+      return NextResponse.json(item, { headers: corsHeaders() });
+    } catch (err) {
+      return menuErrorResponse(err);
+    }
+  }
+
   // /api/v1/auth/chefs/:id
   if (route[0] === 'auth' && route[1] === 'chefs' && route.length === 3) {
     const updated = ServerBackend.updateChef(route[2], {
@@ -639,6 +721,18 @@ export async function PATCH(
     return NextResponse.json(table, { headers: corsHeaders() });
   }
 
+  // 1b. /api/v1/menu/:id/availability
+  if (route[0] === 'menu' && route.length === 3 && route[2] === 'availability') {
+    const auth = requireAdmin(request);
+    if (auth.error) return auth.error;
+    try {
+      const item = await MenuStore.setAvailability(route[1], body.isAvailable !== false && body.is_available !== false);
+      return NextResponse.json(item, { headers: corsHeaders() });
+    } catch (err) {
+      return menuErrorResponse(err);
+    }
+  }
+
   // 2. /api/v1/orders/:id/status
   if (route[0] === 'orders' && route.length === 3 && route[2] === 'status') {
     const res = await CafeStore.updateOrderStatus(route[1], body.status as OrderStatus);
@@ -664,7 +758,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ route: string[] }> }
 ) {
   const { route } = await context.params;
@@ -677,6 +771,19 @@ export async function DELETE(
       return NextResponse.json({ detail: 'Table not found' }, { status: 404, headers: corsHeaders() });
     }
     return NextResponse.json({ message: 'Table deleted successfully', id: route[1] }, { headers: corsHeaders() });
+  }
+
+  // 1b. /api/v1/menu/:id and /api/v1/categories/:id (Admin removes a dish or an empty category)
+  if ((route[0] === 'menu' || route[0] === 'categories') && route.length === 2) {
+    const auth = requireAdmin(request);
+    if (auth.error) return auth.error;
+    try {
+      if (route[0] === 'menu') await MenuStore.deleteItem(route[1]);
+      else await MenuStore.deleteCategory(route[1]);
+      return NextResponse.json({ message: 'Deleted successfully', id: route[1] }, { headers: corsHeaders() });
+    } catch (err) {
+      return menuErrorResponse(err);
+    }
   }
 
   // 2. /api/v1/auth/chefs/:id

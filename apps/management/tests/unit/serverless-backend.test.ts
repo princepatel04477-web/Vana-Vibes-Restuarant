@@ -45,7 +45,7 @@ describe('Serverless Backend Authentication & Data Store', () => {
   it('returns valid tables and menu data', async () => {
     const tables = await ServerBackend.getTables();
     expect(tables.length).toBeGreaterThan(0);
-    const categories = ServerBackend.getCategories();
+    const categories = await ServerBackend.getCategories();
     expect(categories.length).toBeGreaterThan(0);
   });
 });

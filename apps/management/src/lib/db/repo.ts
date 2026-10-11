@@ -1,5 +1,5 @@
 /**
- * Persistence for tables and orders (bills live on the orders).
+ * Persistence for tables, orders (bills live on the orders) and admin menu changes.
  *
  * - With DATABASE_URL (or POSTGRES_URL) set, data is stored in Postgres so it survives
  *   serverless cold starts and is shared by every Vercel instance.
@@ -9,7 +9,7 @@
  * in-process queue) so two phones ordering at once cannot overwrite each other.
  */
 import { Pool, PoolClient } from 'pg';
-import { Order, TableInfo } from '@/types/cafe';
+import { MenuCategory, MenuItem, Order, TableInfo } from '@/types/cafe';
 
 export interface OrderQuery {
   tableId?: string;
@@ -18,6 +18,18 @@ export interface OrderQuery {
   unpaidOnly?: boolean;
   from?: Date;
   to?: Date;
+}
+
+export type MenuEntryKind = 'item' | 'category';
+
+/**
+ * An admin change to the menu: a new or edited dish/category, or `data: null` when it was deleted.
+ * The static menu in `vaan-vibes-menu.ts` is the base; these entries are applied on top of it.
+ */
+export interface MenuEntry {
+  kind: MenuEntryKind;
+  id: string;
+  data: MenuItem | MenuCategory | null;
 }
 
 export interface StoreRepo {
@@ -31,6 +43,9 @@ export interface StoreRepo {
   nextOrderNumber(): Promise<number>;
   /** Deletes every order and replaces the tables. */
   resetAll(tables: TableInfo[]): Promise<void>;
+  /** Oldest first, so new dishes and categories keep the order they were added in. */
+  listMenuEntries(): Promise<MenuEntry[]>;
+  saveMenuEntry(entry: MenuEntry): Promise<void>;
 }
 
 export const FIRST_ORDER_NUMBER = 1001;
@@ -70,6 +85,7 @@ const byNumber = (a: TableInfo, b: TableInfo) => a.tableNumber - b.tableNumber;
 interface MemoryState {
   tables: TableInfo[] | null;
   orders: Order[];
+  menu: MenuEntry[];
   orderCounter: number;
   queue: Promise<unknown>;
 }
@@ -83,6 +99,7 @@ function memoryState(): MemoryState {
     global.__VAAN_VIBES_MEMORY_DB__ = {
       tables: null,
       orders: [],
+      menu: [],
       orderCounter: FIRST_ORDER_NUMBER,
       queue: Promise.resolve(),
     };
@@ -137,6 +154,15 @@ const memoryRepo: StoreRepo = {
     state.tables = clone(tables);
     state.orderCounter = FIRST_ORDER_NUMBER;
   },
+  async listMenuEntries() {
+    return clone(memoryState().menu);
+  },
+  async saveMenuEntry(entry) {
+    const state = memoryState();
+    const idx = state.menu.findIndex((e) => e.kind === entry.kind && e.id === entry.id);
+    if (idx === -1) state.menu.push(clone(entry));
+    else state.menu[idx] = clone(entry);
+  },
 };
 
 // -----------------------------------------------------------------------------
@@ -180,6 +206,13 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS vv_orders_table_idx ON vv_orders (table_id, payment_status);
   CREATE INDEX IF NOT EXISTS vv_orders_session_idx ON vv_orders (session_token);
   CREATE INDEX IF NOT EXISTS vv_orders_created_idx ON vv_orders (created_at DESC);
+  CREATE TABLE IF NOT EXISTS vv_menu (
+    kind TEXT NOT NULL,
+    id TEXT NOT NULL,
+    data JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (kind, id)
+  );
   CREATE TABLE IF NOT EXISTS vv_meta (
     key TEXT PRIMARY KEY,
     value BIGINT NOT NULL
@@ -293,6 +326,17 @@ function pgRepo(client: PoolClient): StoreRepo {
         `INSERT INTO vv_meta (key, value) VALUES ('order_counter', $1)
          ON CONFLICT (key) DO UPDATE SET value = $1`,
         [FIRST_ORDER_NUMBER - 1]
+      );
+    },
+    async listMenuEntries() {
+      const res = await client.query<MenuEntry>('SELECT kind, id, data FROM vv_menu ORDER BY created_at, id');
+      return res.rows;
+    },
+    async saveMenuEntry(entry) {
+      await client.query(
+        `INSERT INTO vv_menu (kind, id, data) VALUES ($1, $2, $3)
+         ON CONFLICT (kind, id) DO UPDATE SET data = EXCLUDED.data`,
+        [entry.kind, entry.id, entry.data === null ? null : JSON.stringify(entry.data)]
       );
     },
   };

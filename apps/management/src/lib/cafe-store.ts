@@ -1,7 +1,8 @@
-import { BillData, CafeDetails, CartItem, Order, OrderStatus, PaymentStatus, TableInfo, TableStatus } from '@/types/cafe';
-import { MENU_ITEMS } from '@/data/vaan-vibes-menu';
+import { BillData, CafeDetails, CartItem, MenuItem, Order, OrderStatus, PaymentStatus, TableInfo, TableStatus } from '@/types/cafe';
+import { calculateBillBreakdown } from '@/utils/billing';
 import { buildCustomerMenuUrl } from './qr-url';
 import { StoreRepo, setInitialTablesFactory, withRead, withWrite } from './db/repo';
+import { buildMenu } from './menu-store';
 
 export const CAFE_INFO: CafeDetails = {
   id: 'van-vibes',
@@ -68,6 +69,80 @@ function checkTableQR(
     return { valid: false, error: 'Invalid or forged QR code token. Please scan the official table standee.' };
   }
   return { valid: true, table };
+}
+
+async function loadMenuItems(repo: StoreRepo): Promise<MenuItem[]> {
+  return buildMenu(await repo.listMenuEntries()).items;
+}
+
+/** Cancelled orders stay in the session's history but are never charged. */
+function billableSubtotal(sessionOrders: Order[]): number {
+  return sessionOrders.filter((o) => o.status !== 'CANCELLED').reduce((sum, o) => sum + o.subtotal, 0);
+}
+
+/** The bill for a dining session, using the discount and extra charge saved on its orders. */
+function buildBill(order: Order, sessionOrders: Order[], menuItems: MenuItem[]): BillData {
+  const sorted = [...sessionOrders].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const first = sorted[0] || order;
+  const billable = sorted.filter((o) => o.status !== 'CANCELLED');
+  const breakdown = calculateBillBreakdown(billableSubtotal(sorted), first.discountPercentage || 0, first.extraCharge || 0);
+  const tax = Math.round(breakdown.subtotal * CAFE_INFO.taxRate * 100) / 100;
+  const cgst = Math.round((tax / 2) * 100) / 100;
+  const sgst = Math.round((tax / 2) * 100) / 100;
+
+  const isPaid = sorted.some((o) => o.paymentStatus === 'PAID' || o.sessionStatus === 'CLOSED');
+  const isBilled = sorted.some((o) => o.billGenerated || o.sessionStatus === 'BILL_GENERATED');
+  const sessionStatus = isPaid ? 'CLOSED' : isBilled ? 'BILL_GENERATED' : 'OPEN';
+
+  return {
+    billNumber: `BILL-${first.id.replace('VV-', '')}-${new Date(first.createdAt).getFullYear()}`,
+    orderId: order.id,
+    orderIds: billable.map((o) => o.id),
+    diningSessionId: order.diningSessionId || order.sessionToken,
+    sessionStatus,
+    tableStatus: sessionStatus === 'OPEN' ? 'OCCUPIED' : 'AVAILABLE',
+    cafe: CAFE_INFO,
+    tableNumber: order.tableNumber,
+    customerName: first.customerName,
+    customerMobile: first.customerMobile,
+    specialInstructions: billable.map((o) => o.specialInstructions).filter(Boolean).join(' | ') || undefined,
+    items: billable.flatMap((so) =>
+      so.items.map((i) => {
+        // i.price is what was charged when ordered (add-ons included); add-on prices come from the menu
+        const canonical = menuItems.find((m) => m.id === i.menuItemId || m.name === i.name);
+        const extrasList = (i.selectedAddOns || []).map((name) => {
+          const price = canonical?.addOns?.find((a) => a.name === name)?.price || 0;
+          return { name, price, total: price * i.quantity };
+        });
+        const baseUnitPrice = Math.max(0, i.price - extrasList.reduce((acc, e) => acc + e.price, 0));
+
+        return {
+          name: i.name,
+          quantity: i.quantity,
+          unitPrice: i.price,
+          totalPrice: i.price * i.quantity,
+          baseUnitPrice,
+          baseTotalPrice: baseUnitPrice * i.quantity,
+          extras: extrasList.length > 0 ? extrasList : undefined,
+          notes: [i.selectedOptions ? Object.values(i.selectedOptions).join(', ') : '']
+            .filter(Boolean)
+            .join(' | '),
+        };
+      })
+    ),
+    subtotal: breakdown.subtotal,
+    cgst,
+    sgst,
+    taxAmount: tax,
+    discountPercentage: breakdown.discountPercentage,
+    discountAmount: breakdown.discountAmount,
+    extraCharge: breakdown.extraCharge,
+    amountAfterAdjustments: breakdown.amountAfterAdjustments,
+    roundOff: breakdown.roundOff,
+    total: breakdown.total + tax,
+    paymentStatus: isPaid ? 'PAID' : order.paymentStatus,
+    createdAt: first.createdAt,
+  };
 }
 
 /** Orders of the same dining session as `order` (always including `order` itself). */
@@ -150,16 +225,17 @@ export const CafeStore = {
         return { success: false, error: 'Phone number must contain exactly 10 digits' };
       }
 
-      // 3. Validate and Calculate Items server-side from authoritative MENU_ITEMS
+      // 3. Validate and Calculate Items server-side from the live menu
       if (!data.items || data.items.length === 0) {
         return { success: false, error: 'Cart cannot be empty' };
       }
 
       const validatedItems: CartItem[] = [];
       let subtotal = 0;
+      const menuItems = await loadMenuItems(repo);
 
       for (const item of data.items) {
-        const canonicalItem = MENU_ITEMS.find((m) => m.id === item.menuItemId);
+        const canonicalItem = menuItems.find((m) => m.id === item.menuItemId);
         if (!canonicalItem) {
           return { success: false, error: `Invalid item selected: ${item.name}` };
         }
@@ -317,28 +393,38 @@ export const CafeStore = {
     });
   },
 
-  async generateBill(orderId: string, discountPercentage: number = 0): Promise<BillData | null> {
+  /** The current bill of an order's dining session, without changing anything. */
+  async getBill(orderId: string): Promise<BillData | null> {
+    return withRead(async (repo) => {
+      const order = await repo.getOrder(orderId);
+      if (!order) return null;
+      return buildBill(order, await loadSessionOrders(repo, order), await loadMenuItems(repo));
+    });
+  },
+
+  /** Finalizes the bill for an order's whole dining session and frees the table. */
+  async generateBill(orderId: string, discountPercentage: number = 0, extraCharge: number = 0): Promise<BillData | null> {
     return withWrite(async (repo) => {
       const order = await repo.getOrder(orderId);
       if (!order) return null;
 
       // Permanently close current order group for that dining session
       const sessionOrders = await loadSessionOrders(repo, order);
-
-      const discountPct = Math.max(0, Math.min(100, discountPercentage));
-      const subtotal = sessionOrders.reduce((sum, o) => sum + o.subtotal, 0);
-      const tax = Math.round(subtotal * CAFE_INFO.taxRate * 100) / 100;
-      const cgst = Math.round((tax / 2) * 100) / 100;
-      const sgst = Math.round((tax / 2) * 100) / 100;
-      const discountAmount = Math.round(subtotal * (discountPct / 100) * 100) / 100;
-      const total = Math.round(Math.max(0, subtotal + tax - discountAmount) * 100) / 100;
+      const breakdown = calculateBillBreakdown(
+        billableSubtotal(sessionOrders),
+        Number(discountPercentage) || 0,
+        Number(extraCharge) || 0
+      );
 
       const now = new Date().toISOString();
       for (const o of sessionOrders) {
         o.billGenerated = true;
         o.sessionStatus = o.sessionStatus === 'CLOSED' ? 'CLOSED' : 'BILL_GENERATED';
-        o.discountPercentage = discountPct;
-        o.discountAmount = discountAmount;
+        o.discountPercentage = breakdown.discountPercentage;
+        o.discountAmount = breakdown.discountAmount;
+        o.extraCharge = breakdown.extraCharge;
+        o.amountAfterAdjustments = breakdown.amountAfterAdjustments;
+        o.roundOff = breakdown.roundOff;
         o.billedAt = o.billedAt || now;
         o.updatedAt = now;
       }
@@ -352,61 +438,15 @@ export const CafeStore = {
         await repo.saveTables([table]);
       }
 
-      const current = sessionOrders.find((o) => o.id === order.id) || order;
-      return {
-        billNumber: `BILL-${order.id.replace('VV-', '')}-${new Date(order.createdAt).getFullYear()}`,
-        orderId: order.id,
-        diningSessionId: order.diningSessionId || order.sessionToken,
-        sessionStatus: 'BILL_GENERATED',
-        tableStatus: 'AVAILABLE',
-        cafe: CAFE_INFO,
-        tableNumber: order.tableNumber,
-        customerName: order.customerName,
-        customerMobile: order.customerMobile,
-        specialInstructions: order.specialInstructions,
-        items: sessionOrders.flatMap((so) =>
-          so.items.map((i) => {
-            const canonical = MENU_ITEMS.find((m) => m.id === i.menuItemId || m.name === i.name);
-            const extrasList: { name: string; price: number; total: number }[] = [];
-            if (i.selectedAddOns && i.selectedAddOns.length > 0) {
-              for (const addOnName of i.selectedAddOns) {
-                const matched = canonical?.addOns?.find((a) => a.name === addOnName);
-                const addOnPrice = matched ? matched.price : 0;
-                extrasList.push({
-                  name: addOnName,
-                  price: addOnPrice,
-                  total: addOnPrice * i.quantity,
-                });
-              }
-            }
-            const sumExtrasUnit = extrasList.reduce((acc, e) => acc + e.price, 0);
-            const baseUnitPrice = canonical ? canonical.price : Math.max(0, i.price - sumExtrasUnit);
-            const baseTotalPrice = baseUnitPrice * i.quantity;
+      return buildBill(order, sessionOrders, await loadMenuItems(repo));
+    });
+  },
 
-            return {
-              name: i.name,
-              quantity: i.quantity,
-              unitPrice: i.price,
-              totalPrice: i.price * i.quantity,
-              baseUnitPrice,
-              baseTotalPrice,
-              extras: extrasList.length > 0 ? extrasList : undefined,
-              notes: [i.selectedOptions ? Object.values(i.selectedOptions).join(', ') : '']
-                .filter(Boolean)
-                .join(' | '),
-            };
-          })
-        ),
-        subtotal,
-        cgst,
-        sgst,
-        taxAmount: tax,
-        discountPercentage: discountPct,
-        discountAmount,
-        total,
-        paymentStatus: current.paymentStatus,
-        createdAt: order.createdAt,
-      };
+  /** Newest order of a dining session (the session id is the orders' session token). */
+  async getSessionOrderId(sessionId: string): Promise<string | undefined> {
+    return withRead(async (repo) => {
+      const [newest] = await repo.listOrders({ sessionToken: sessionId });
+      return newest?.id;
     });
   },
 

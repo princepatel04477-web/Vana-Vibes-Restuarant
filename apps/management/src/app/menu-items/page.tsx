@@ -81,7 +81,7 @@ export default function MenuItemsAdminPage() {
     isVeg: true,
     popular: false,
   });
-  const [newItemErrors, setNewItemErrors] = useState<{ name?: string; category?: string; price?: string }>({});
+  const [newItemErrors, setNewItemErrors] = useState<{ name?: string; category?: string; price?: string; form?: string }>({});
   const [isSubmittingItem, setIsSubmittingItem] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -402,31 +402,10 @@ export default function MenuItemsAdminPage() {
         setNewItemErrors(err.fieldErrors);
         return;
       }
-      // Local fallback
-      const newItem: MenuItem = {
-        id: `custom-${Date.now()}`,
-        name: newItemForm.name.trim(),
-        category: String(newItemForm.category),
-        price: Math.max(1, Number(newItemForm.price) || 1),
-        description: newItemForm.description.trim() || undefined,
-        isVeg: newItemForm.isVeg,
-        popular: newItemForm.popular,
-        isAvailable: true,
-      };
-      setItems((prev) => {
-        const withoutNew = prev.filter((i) => i.id !== newItem.id);
-        return sortMenuItemsAlphabetically([...withoutNew, newItem]);
-      });
-      triggerFeedback(`"${newItem.name}" added to menu catalog`);
-      setIsAddModalOpen(false);
-      setNewItemForm({
-        name: "",
-        category: "", // unselected by default!
-        price: 150,
-        description: "",
-        isVeg: true,
-        popular: false,
-      });
+      // Keep the form open so nothing typed is lost; the dish was NOT saved.
+      console.error('Failed to save dish on backend:', err);
+      const msg = err instanceof Error ? err.message : 'Server error';
+      setNewItemErrors({ form: `Could not save this dish: ${msg}` });
     } finally {
       setIsSubmittingItem(false);
     }
@@ -1173,6 +1152,13 @@ export default function MenuItemsAdminPage() {
                   <span>Mark as Popular</span>
                 </label>
               </div>
+
+              {newItemErrors.form && (
+                <p className="p-3 rounded-xl bg-red-50 border border-red-200 text-[11px] text-red-700 font-semibold flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{newItemErrors.form}</span>
+                </p>
+              )}
             </form>
 
             {/* Fixed Footer */}

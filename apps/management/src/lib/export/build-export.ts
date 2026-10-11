@@ -323,8 +323,8 @@ async function buildSheet(
       };
     }
     case 'menu_items': {
-      const categories = ServerBackend.getCategories();
-      const items = ServerBackend.getMenuItems().filter((m) => {
+      const categories = await ServerBackend.getCategories();
+      const items = (await ServerBackend.getMenuItems()).filter((m) => {
         if (filters.menuCategory && filters.menuCategory.toLowerCase() !== 'all' && m.category !== filters.menuCategory) {
           return false;
         }

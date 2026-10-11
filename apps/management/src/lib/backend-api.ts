@@ -5,7 +5,7 @@
  */
 
 import { CafeStore, CAFE_INFO } from './cafe-store';
-import { MENU_ITEMS, MENU_CATEGORIES } from '@/data/vaan-vibes-menu';
+import { MenuStore } from './menu-store';
 
 let cachedWorkingBackendUrl: string | null = null;
 
@@ -97,14 +97,14 @@ export async function fetchFromBackend(endpoint: string, options: RequestInit = 
   }
 
   if (cleanEndpoint.includes('/categories')) {
-    return new Response(JSON.stringify(MENU_CATEGORIES), {
+    return new Response(JSON.stringify(await MenuStore.getCategories()), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
   }
 
   if (cleanEndpoint.includes('/menu')) {
-    return new Response(JSON.stringify(MENU_ITEMS), {
+    return new Response(JSON.stringify(await MenuStore.getItems()), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });

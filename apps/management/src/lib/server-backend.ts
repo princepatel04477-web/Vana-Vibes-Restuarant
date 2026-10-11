@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { CafeStore, CAFE_INFO } from './cafe-store';
-import { MENU_ITEMS, MENU_CATEGORIES } from '@/data/vaan-vibes-menu';
+import { MenuStore } from './menu-store';
 import { User, UserRole } from '@/types/auth';
 import { Order, MenuItem, MenuCategory, TableInfo, TableStatus } from '@/types/cafe';
 
@@ -67,23 +67,13 @@ const DEFAULT_USERS: StoredUser[] = [
 
 declare global {
   var __VAAN_VIBES_USERS_STORE__: StoredUser[] | undefined;
-  var __VAAN_VIBES_DYNAMIC_MENU__: MenuItem[] | undefined;
-  var __VAAN_VIBES_DYNAMIC_CATEGORIES__: MenuCategory[] | undefined;
 }
 
 if (!global.__VAAN_VIBES_USERS_STORE__) {
   global.__VAAN_VIBES_USERS_STORE__ = [...DEFAULT_USERS];
 }
-if (!global.__VAAN_VIBES_DYNAMIC_MENU__) {
-  global.__VAAN_VIBES_DYNAMIC_MENU__ = [...MENU_ITEMS];
-}
-if (!global.__VAAN_VIBES_DYNAMIC_CATEGORIES__) {
-  global.__VAAN_VIBES_DYNAMIC_CATEGORIES__ = [...MENU_CATEGORIES];
-}
 
 const usersStore = global.__VAAN_VIBES_USERS_STORE__;
-const menuStore = global.__VAAN_VIBES_DYNAMIC_MENU__;
-const categoriesStore = global.__VAAN_VIBES_DYNAMIC_CATEGORIES__;
 
 // -----------------------------------------------------------------------------
 // JWT Helpers (Node.js crypto HMAC SHA-256)
@@ -345,8 +335,8 @@ export const ServerBackend = {
   },
 
   // --- MENU & CATEGORIES ---
-  getMenuItems(category?: string, search?: string): MenuItem[] {
-    let items = [...menuStore];
+  async getMenuItems(category?: string, search?: string): Promise<MenuItem[]> {
+    let items = await MenuStore.getItems();
     if (category && category !== 'all') {
       items = items.filter((i) => i.category === category);
     }
@@ -357,8 +347,8 @@ export const ServerBackend = {
     return items;
   },
 
-  getCategories(): MenuCategory[] {
-    return [...categoriesStore];
+  getCategories(): Promise<MenuCategory[]> {
+    return MenuStore.getCategories();
   },
 
   getSettings() {
