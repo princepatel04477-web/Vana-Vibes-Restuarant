@@ -83,7 +83,7 @@ export async function fetchFromBackend(endpoint: string, options: RequestInit = 
 
   // 3. In-App Serverless Fallback (All-in-One Vercel hosting)
   if (cleanEndpoint.includes('/tables')) {
-    return new Response(JSON.stringify(CafeStore.getAllTables()), {
+    return new Response(JSON.stringify(await CafeStore.getAllTables()), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -111,7 +111,7 @@ export async function fetchFromBackend(endpoint: string, options: RequestInit = 
   }
 
   if (cleanEndpoint.includes('/orders')) {
-    return new Response(JSON.stringify(CafeStore.getAllOrders()), {
+    return new Response(JSON.stringify(await CafeStore.getAllOrders()), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });

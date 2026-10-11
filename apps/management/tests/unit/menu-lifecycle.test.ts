@@ -3,13 +3,13 @@ import { CafeStore } from '@/lib/cafe-store';
 import { MENU_ITEMS } from '@/data/vaan-vibes-menu';
 
 describe('Menu Item Availability & Store Validation', () => {
-  it('rejects ordering when a dish is marked unavailable', () => {
+  it('rejects ordering when a dish is marked unavailable', async () => {
     // Pick the first item and simulate marking it unavailable
     const firstItem = MENU_ITEMS[0];
     const prevAvailable = firstItem.isAvailable;
     firstItem.isAvailable = false;
 
-    const result = CafeStore.createOrder({
+    const result = await CafeStore.createOrder({
       tableId: 'T01',
       token: 'vv_sec_t01_9999',
       sessionToken: 'sess_test',
@@ -34,8 +34,8 @@ describe('Menu Item Availability & Store Validation', () => {
     firstItem.isAvailable = prevAvailable;
   });
 
-  it('rejects ordering unknown / deleted item ID', () => {
-    const result = CafeStore.createOrder({
+  it('rejects ordering unknown / deleted item ID', async () => {
+    const result = await CafeStore.createOrder({
       tableId: 'T01',
       token: 'vv_sec_t01_9999',
       sessionToken: 'sess_test',

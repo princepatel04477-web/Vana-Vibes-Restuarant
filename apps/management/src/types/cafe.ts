@@ -140,6 +140,9 @@ export interface Order {
   cancelled_by?: string;
   cancelledAt?: string;
   cancelled_at?: string;
+  paymentMethod?: string;
+  billedAt?: string;
+  paidAt?: string;
   createdAt: string;
   updatedAt: string;
 }

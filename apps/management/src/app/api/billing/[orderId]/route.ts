@@ -19,7 +19,7 @@ export async function GET(
     // Proceed to local CafeStore
   }
 
-  const bill = CafeStore.generateBill(orderId);
+  const bill = await CafeStore.generateBill(orderId);
 
   if (!bill) {
     return NextResponse.json({ error: 'Bill not found for order' }, { status: 404 });

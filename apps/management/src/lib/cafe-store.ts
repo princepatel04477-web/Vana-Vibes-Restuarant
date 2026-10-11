@@ -1,6 +1,7 @@
 import { BillData, CafeDetails, CartItem, Order, OrderStatus, PaymentStatus, TableInfo, TableStatus } from '@/types/cafe';
 import { MENU_ITEMS } from '@/data/vaan-vibes-menu';
 import { buildCustomerMenuUrl } from './qr-url';
+import { StoreRepo, setInitialTablesFactory, withRead, withWrite } from './db/repo';
 
 export const CAFE_INFO: CafeDetails = {
   id: 'van-vibes',
@@ -40,96 +41,91 @@ function createInitialTables(): TableInfo[] {
   });
 }
 
-const INITIAL_ORDER_COUNTER = 1001;
+setInitialTablesFactory(createInitialTables);
 
-// Persistent global store for dev and serverless runtime singleton
-declare global {
-  var __VAAN_VIBES_STORE__: {
-    tables: TableInfo[];
-    orders: Order[];
-    orderCounter: number;
-  } | undefined;
+function findTable(tables: TableInfo[], tableId: string): TableInfo | undefined {
+  return tables.find(
+    (t) => t.id.toLowerCase() === tableId.toLowerCase() || t.tableNumber.toString() === tableId
+  );
 }
 
-if (!global.__VAAN_VIBES_STORE__) {
-  global.__VAAN_VIBES_STORE__ = {
-    tables: createInitialTables(),
-    orders: [],
-    orderCounter: INITIAL_ORDER_COUNTER,
-  };
+async function loadTable(repo: StoreRepo, tableId: string): Promise<TableInfo | undefined> {
+  return findTable(await repo.listTables(), tableId);
 }
 
-const store = global.__VAAN_VIBES_STORE__;
+function checkTableQR(
+  table: TableInfo | undefined,
+  tableId: string,
+  token: string
+): { valid: boolean; table?: TableInfo; error?: string } {
+  if (!tableId || !token) {
+    return { valid: false, error: 'Missing table identifier or QR security token' };
+  }
+  if (!table) {
+    return { valid: false, error: `Table '${tableId}' does not exist in this cafe` };
+  }
+  // Verify token matches server's secret token or table security prefix
+  const matchesPrefix = token.startsWith(`vv_sec_${table.id.toLowerCase()}`);
+  if (table.token !== token && !matchesPrefix && token !== 'demo') {
+    return { valid: false, error: 'Invalid or forged QR code token. Please scan the official table standee.' };
+  }
+  return { valid: true, table };
+}
+
+/** Orders of the same dining session as `order` (always including `order` itself). */
+async function loadSessionOrders(repo: StoreRepo, order: Order): Promise<Order[]> {
+  const sameSession = await repo.listOrders({ tableId: order.tableId, sessionToken: order.sessionToken });
+  return sameSession.some((o) => o.id === order.id) ? sameSession : [order, ...sameSession];
+}
 
 export const CafeStore = {
   getCafeDetails(): CafeDetails {
     return CAFE_INFO;
   },
 
-  getAllTables(): TableInfo[] {
-    return store.tables;
+  async getAllTables(): Promise<TableInfo[]> {
+    return withRead((repo) => repo.listTables());
   },
 
-  getTable(tableId: string): TableInfo | undefined {
-    return store.tables.find(
-      (t) => t.id.toLowerCase() === tableId.toLowerCase() || t.tableNumber.toString() === tableId
-    );
+  async getTable(tableId: string): Promise<TableInfo | undefined> {
+    return withRead((repo) => loadTable(repo, tableId));
   },
 
-  validateTableQR(tableId: string, token: string): { valid: boolean; table?: TableInfo; error?: string } {
-    if (!tableId || !token) {
-      return { valid: false, error: 'Missing table identifier or QR security token' };
-    }
-
-    const table = this.getTable(tableId);
-    if (!table) {
-      return { valid: false, error: `Table '${tableId}' does not exist in this cafe` };
-    }
-
-    // Verify token matches server's secret token or table security prefix
-    const matchesPrefix = token.startsWith(`vv_sec_${table.id.toLowerCase()}`);
-    if (table.token !== token && !matchesPrefix && token !== 'demo') {
-      return { valid: false, error: 'Invalid or forged QR code token. Please scan the official table standee.' };
-    }
-
-    return { valid: true, table };
+  async validateTableQR(tableId: string, token: string): Promise<{ valid: boolean; table?: TableInfo; error?: string }> {
+    const table = tableId ? await this.getTable(tableId) : undefined;
+    return checkTableQR(table, tableId, token);
   },
 
-  getAllOrders(): Order[] {
-    // Return newest first
-    return [...store.orders].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+  /** Newest first, optionally limited to a date window. */
+  async getAllOrders(range?: { from?: Date; to?: Date }): Promise<Order[]> {
+    return withRead((repo) => repo.listOrders(range));
   },
 
-  getOrderById(id: string): Order | undefined {
-    return store.orders.find((o) => o.id === id);
+  async getOrderById(id: string): Promise<Order | undefined> {
+    return withRead((repo) => repo.getOrder(id));
   },
 
-  getOrdersByTable(tableId: string): Order[] {
-    const table = this.getTable(tableId);
-    if (!table) return [];
-    return store.orders
-      .filter((o) => o.tableId === table.id)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  async getOrdersByTable(tableId: string): Promise<Order[]> {
+    return withRead(async (repo) => {
+      const table = await loadTable(repo, tableId);
+      return table ? repo.listOrders({ tableId: table.id }) : [];
+    });
   },
 
-  getOrdersBySession(tableId: string, sessionToken?: string): Order[] {
-    const table = this.getTable(tableId);
-    if (!table) return [];
-    if (sessionToken) {
-      return store.orders
-        .filter((o) => o.tableId === table.id && o.sessionToken === sessionToken && o.paymentStatus !== 'PAID')
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    }
-    const newest = store.orders.find((o) => o.tableId === table.id && o.paymentStatus !== 'PAID');
-    if (!newest) return [];
-    return store.orders
-      .filter((o) => o.tableId === table.id && o.sessionToken === newest.sessionToken && o.paymentStatus !== 'PAID')
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  async getOrdersBySession(tableId: string, sessionToken?: string): Promise<Order[]> {
+    return withRead(async (repo) => {
+      const table = await loadTable(repo, tableId);
+      if (!table) return [];
+      if (sessionToken) {
+        return repo.listOrders({ tableId: table.id, sessionToken, unpaidOnly: true });
+      }
+      const [newest] = await repo.listOrders({ tableId: table.id, unpaidOnly: true });
+      if (!newest) return [];
+      return repo.listOrders({ tableId: table.id, sessionToken: newest.sessionToken, unpaidOnly: true });
+    });
   },
 
-  createOrder(data: {
+  async createOrder(data: {
     tableId: string;
     token: string;
     sessionToken: string;
@@ -137,345 +133,364 @@ export const CafeStore = {
     customerMobile: string;
     specialInstructions?: string;
     items: CartItem[];
-  }): { success: boolean; order?: Order; error?: string } {
-    // 1. Validate Table QR
-    const qrValidation = this.validateTableQR(data.tableId, data.token);
-    if (!qrValidation.valid || !qrValidation.table) {
-      return { success: false, error: qrValidation.error || 'Invalid table validation' };
-    }
-
-    const table = qrValidation.table;
-
-    // 2. Validate Customer Details
-    if (!data.customerName || data.customerName.trim().length < 2) {
-      return { success: false, error: 'Please enter your full name (minimum 2 characters)' };
-    }
-    const cleanMobile = (data.customerMobile || '').trim();
-    if (!/^\d{10}$/.test(cleanMobile)) {
-      return { success: false, error: 'Phone number must contain exactly 10 digits' };
-    }
-
-    // 3. Validate and Calculate Items server-side from authoritative MENU_ITEMS
-    if (!data.items || data.items.length === 0) {
-      return { success: false, error: 'Cart cannot be empty' };
-    }
-
-    const validatedItems: CartItem[] = [];
-    let subtotal = 0;
-
-    for (const item of data.items) {
-      const canonicalItem = MENU_ITEMS.find((m) => m.id === item.menuItemId);
-      if (!canonicalItem) {
-        return { success: false, error: `Invalid item selected: ${item.name}` };
-      }
-      if (canonicalItem.isAvailable === false) {
-        return { success: false, error: `"${canonicalItem.name}" is currently unavailable` };
+  }): Promise<{ success: boolean; order?: Order; error?: string }> {
+    return withWrite(async (repo) => {
+      // 1. Validate Table QR
+      const qrValidation = checkTableQR(await loadTable(repo, data.tableId || ''), data.tableId, data.token);
+      if (!qrValidation.valid || !qrValidation.table) {
+        return { success: false, error: qrValidation.error || 'Invalid table validation' };
       }
 
-      const qty = Math.max(1, Math.min(item.quantity || 1, 50));
-      const basePrice = canonicalItem.price;
-      let itemPrice = basePrice;
+      const table = qrValidation.table;
 
-      // Calculate add-on extras if selected
-      if (item.selectedAddOns && item.selectedAddOns.length > 0 && canonicalItem.addOns) {
-        for (const addOnName of item.selectedAddOns) {
-          const matchedAddon = canonicalItem.addOns.find((a) => a.name === addOnName);
-          if (matchedAddon) {
-            itemPrice += matchedAddon.price;
+      // 2. Validate Customer Details
+      if (!data.customerName || data.customerName.trim().length < 2) {
+        return { success: false, error: 'Please enter your full name (minimum 2 characters)' };
+      }
+      const cleanMobile = (data.customerMobile || '').trim();
+      if (!/^\d{10}$/.test(cleanMobile)) {
+        return { success: false, error: 'Phone number must contain exactly 10 digits' };
+      }
+
+      // 3. Validate and Calculate Items server-side from authoritative MENU_ITEMS
+      if (!data.items || data.items.length === 0) {
+        return { success: false, error: 'Cart cannot be empty' };
+      }
+
+      const validatedItems: CartItem[] = [];
+      let subtotal = 0;
+
+      for (const item of data.items) {
+        const canonicalItem = MENU_ITEMS.find((m) => m.id === item.menuItemId);
+        if (!canonicalItem) {
+          return { success: false, error: `Invalid item selected: ${item.name}` };
+        }
+        if (canonicalItem.isAvailable === false) {
+          return { success: false, error: `"${canonicalItem.name}" is currently unavailable` };
+        }
+
+        const qty = Math.max(1, Math.min(item.quantity || 1, 50));
+        let itemPrice = canonicalItem.price;
+
+        // Calculate add-on extras if selected
+        if (item.selectedAddOns && item.selectedAddOns.length > 0 && canonicalItem.addOns) {
+          for (const addOnName of item.selectedAddOns) {
+            const matchedAddon = canonicalItem.addOns.find((a) => a.name === addOnName);
+            if (matchedAddon) {
+              itemPrice += matchedAddon.price;
+            }
+          }
+        }
+
+        subtotal += itemPrice * qty;
+
+        validatedItems.push({
+          id: item.id,
+          menuItemId: canonicalItem.id,
+          name: canonicalItem.name,
+          category: canonicalItem.category,
+          price: itemPrice,
+          quantity: qty,
+          selectedOptions: item.selectedOptions,
+          selectedAddOns: item.selectedAddOns,
+          specialInstructions: item.specialInstructions,
+        });
+      }
+
+      // Rule: If the current session is billed, do NOT append. Start a new dining session.
+      let sessionToken = data.sessionToken;
+      if (sessionToken) {
+        const sessionOrders = await repo.listOrders({ tableId: table.id, sessionToken });
+        const isBilled = sessionOrders.some(
+          (o) => o.billGenerated || o.sessionStatus === 'BILL_GENERATED' || o.sessionStatus === 'CLOSED'
+        );
+        if (isBilled) sessionToken = '';
+      }
+      if (!sessionToken) {
+        sessionToken = `sess_${table.id}_${Date.now()}`;
+      }
+
+      const now = new Date().toISOString();
+      const newOrder: Order = {
+        id: `VV-${await repo.nextOrderNumber()}`,
+        cafeId: CAFE_INFO.id,
+        tableId: table.id,
+        tableNumber: table.tableNumber,
+        sessionToken,
+        customerName: data.customerName.trim(),
+        customerMobile: cleanMobile,
+        specialInstructions: data.specialInstructions?.trim() || undefined,
+        items: validatedItems,
+        subtotal,
+        tax: 0,
+        total: subtotal,
+        status: 'ORDER_PLACED',
+        paymentStatus: 'PENDING',
+        sessionStatus: 'OPEN',
+        billGenerated: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      table.status = 'OCCUPIED';
+      if (!table.seatedAt) table.seatedAt = now;
+
+      await repo.saveOrders([newOrder]);
+      await repo.saveTables([table]);
+      return { success: true, order: newOrder };
+    });
+  },
+
+  async updateOrderStatus(orderId: string, status: OrderStatus): Promise<{ success: boolean; order?: Order; error?: string }> {
+    return withWrite(async (repo) => {
+      const order = await repo.getOrder(orderId);
+      if (!order) {
+        return { success: false, error: `Order ${orderId} not found` };
+      }
+
+      order.status = status;
+      order.updatedAt = new Date().toISOString();
+      await repo.saveOrders([order]);
+
+      // If completed or cancelled, free the table when nothing else is still running on it
+      if (status === 'COMPLETED' || status === 'CANCELLED') {
+        const openOrders = await repo.listOrders({ tableId: order.tableId, unpaidOnly: true });
+        const activeForTable = openOrders.some(
+          (o) => o.id !== order.id && !['COMPLETED', 'CANCELLED'].includes(o.status)
+        );
+        if (!activeForTable) {
+          const table = await loadTable(repo, order.tableId);
+          if (table) {
+            table.status = 'AVAILABLE';
+            table.seatedAt = undefined;
+            await repo.saveTables([table]);
           }
         }
       }
 
-      subtotal += itemPrice * qty;
+      return { success: true, order };
+    });
+  },
 
-      validatedItems.push({
-        id: item.id,
-        menuItemId: canonicalItem.id,
-        name: canonicalItem.name,
-        category: canonicalItem.category,
-        price: itemPrice,
-        quantity: qty,
-        selectedOptions: item.selectedOptions,
-        selectedAddOns: item.selectedAddOns,
-        specialInstructions: item.specialInstructions,
-      });
-    }
+  async updatePaymentStatus(orderId: string, paymentStatus: PaymentStatus): Promise<{ success: boolean; order?: Order; error?: string }> {
+    return withWrite(async (repo) => {
+      const order = await repo.getOrder(orderId);
+      if (!order) {
+        return { success: false, error: `Order ${orderId} not found` };
+      }
+      order.paymentStatus = paymentStatus;
+      order.updatedAt = new Date().toISOString();
+      await repo.saveOrders([order]);
+      return { success: true, order };
+    });
+  },
 
-    const tax = 0;
-    const total = subtotal;
+  async settlePayment(orderId: string, paymentMethod: string = 'CASH'): Promise<{ success: boolean; order?: Order; error?: string }> {
+    return withWrite(async (repo) => {
+      const order = await repo.getOrder(orderId);
+      if (!order) return { success: false, error: 'Order not found' };
 
-    // Rule: Check if current session/order is billed.
-    // If billed, do NOT append. Create and use a NEW dining session context!
-    let sessionToken = data.sessionToken;
-    let isBilledSession = false;
+      const sessionOrders = await loadSessionOrders(repo, order);
+      const now = new Date().toISOString();
+      for (const o of sessionOrders) {
+        o.paymentStatus = 'PAID';
+        o.sessionStatus = 'CLOSED';
+        o.paymentMethod = paymentMethod;
+        o.paidAt = now;
+        o.updatedAt = now;
+      }
+      await repo.saveOrders(sessionOrders);
 
-    if (sessionToken) {
-      const isTokenBilled = store.orders.some(
-        (o) => o.tableId === table.id && o.sessionToken === sessionToken && (o.billGenerated || o.sessionStatus === 'BILL_GENERATED' || o.sessionStatus === 'CLOSED')
+      // Table is set to AVAILABLE only if no other active unbilled session is on the table
+      const settledIds = new Set(sessionOrders.map((o) => o.id));
+      const remaining = await repo.listOrders({ tableId: order.tableId, unpaidOnly: true });
+      const otherActiveSession = remaining.some(
+        (o) => !settledIds.has(o.id) && !o.billGenerated && o.sessionStatus === 'OPEN'
       );
-      if (isTokenBilled) {
-        isBilledSession = true;
+      const table = await loadTable(repo, order.tableId);
+      if (table && !otherActiveSession) {
+        table.status = 'AVAILABLE';
+        table.seatedAt = undefined;
+        await repo.saveTables([table]);
       }
-    } else {
-      const latestOrder = store.orders.find((o) => o.tableId === table.id);
-      if (latestOrder && (latestOrder.billGenerated || latestOrder.sessionStatus === 'BILL_GENERATED')) {
-        isBilledSession = true;
+
+      const settled = sessionOrders.find((o) => o.id === order.id) || order;
+      return { success: true, order: settled };
+    });
+  },
+
+  async generateBill(orderId: string, discountPercentage: number = 0): Promise<BillData | null> {
+    return withWrite(async (repo) => {
+      const order = await repo.getOrder(orderId);
+      if (!order) return null;
+
+      // Permanently close current order group for that dining session
+      const sessionOrders = await loadSessionOrders(repo, order);
+
+      const discountPct = Math.max(0, Math.min(100, discountPercentage));
+      const subtotal = sessionOrders.reduce((sum, o) => sum + o.subtotal, 0);
+      const tax = Math.round(subtotal * CAFE_INFO.taxRate * 100) / 100;
+      const cgst = Math.round((tax / 2) * 100) / 100;
+      const sgst = Math.round((tax / 2) * 100) / 100;
+      const discountAmount = Math.round(subtotal * (discountPct / 100) * 100) / 100;
+      const total = Math.round(Math.max(0, subtotal + tax - discountAmount) * 100) / 100;
+
+      const now = new Date().toISOString();
+      for (const o of sessionOrders) {
+        o.billGenerated = true;
+        o.sessionStatus = o.sessionStatus === 'CLOSED' ? 'CLOSED' : 'BILL_GENERATED';
+        o.discountPercentage = discountPct;
+        o.discountAmount = discountAmount;
+        o.billedAt = o.billedAt || now;
+        o.updatedAt = now;
       }
-    }
+      await repo.saveOrders(sessionOrders);
 
-    if (isBilledSession || !sessionToken) {
-      sessionToken = `sess_${table.id}_${Date.now()}`;
-    }
-
-    const newOrder: Order = {
-      id: `VV-${store.orderCounter++}`,
-      cafeId: CAFE_INFO.id,
-      tableId: table.id,
-      tableNumber: table.tableNumber,
-      sessionToken,
-      customerName: data.customerName.trim(),
-      customerMobile: cleanMobile,
-      specialInstructions: data.specialInstructions?.trim() || undefined,
-      items: validatedItems,
-      subtotal,
-      tax,
-      total,
-      status: 'ORDER_PLACED',
-      paymentStatus: 'PENDING',
-      sessionStatus: 'OPEN',
-      billGenerated: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    store.orders.unshift(newOrder);
-
-    // Update table status to occupied
-    table.status = 'OCCUPIED';
-
-    return { success: true, order: newOrder };
-  },
-
-  updateOrderStatus(orderId: string, status: OrderStatus): { success: boolean; order?: Order; error?: string } {
-    const order = store.orders.find((o) => o.id === orderId);
-    if (!order) {
-      return { success: false, error: `Order ${orderId} not found` };
-    }
-
-    order.status = status;
-    order.updatedAt = new Date().toISOString();
-
-    // If completed or cancelled, check if other active orders remain for table
-    if (status === 'COMPLETED' || status === 'CANCELLED') {
-      const activeForTable = store.orders.some(
-        (o) => o.tableId === order.tableId && !['COMPLETED', 'CANCELLED'].includes(o.status)
-      );
-      if (!activeForTable) {
-        const table = this.getTable(order.tableId);
-        if (table) table.status = 'AVAILABLE';
+      // Bill generation permanently frees the physical table immediately!
+      const table = await loadTable(repo, order.tableId);
+      if (table) {
+        table.status = 'AVAILABLE';
+        table.seatedAt = undefined;
+        await repo.saveTables([table]);
       }
-    }
 
-    return { success: true, order };
-  },
-
-  updatePaymentStatus(orderId: string, paymentStatus: PaymentStatus): { success: boolean; order?: Order; error?: string } {
-    const order = store.orders.find((o) => o.id === orderId);
-    if (!order) {
-      return { success: false, error: `Order ${orderId} not found` };
-    }
-
-    order.paymentStatus = paymentStatus;
-    order.updatedAt = new Date().toISOString();
-    return { success: true, order };
-  },
-
-  settlePayment(orderId: string, _paymentMethod: string = 'CASH'): { success: boolean; order?: Order; error?: string } {
-    void _paymentMethod;
-    const order = this.getOrderById(orderId);
-    if (!order) return { success: false, error: 'Order not found' };
-
-    const targetSessionToken = order.sessionToken;
-    const sessionOrders = store.orders.filter(
-      (o) => o.tableId === order.tableId && (o.sessionToken === targetSessionToken || o.id === order.id)
-    );
-
-    for (const o of sessionOrders) {
-      o.paymentStatus = 'PAID';
-      o.sessionStatus = 'CLOSED';
-      o.updatedAt = new Date().toISOString();
-    }
-
-    // Table is set to AVAILABLE only if no other active unbilled session is on the table
-    const otherActiveSession = store.orders.some(
-      (o) => o.tableId === order.tableId && !o.billGenerated && o.sessionStatus === 'OPEN'
-    );
-    const table = this.getTable(order.tableId);
-    if (table && !otherActiveSession) {
-      table.status = 'AVAILABLE';
-    }
-
-    return { success: true, order };
-  },
-
-  generateBill(orderId: string, discountPercentage: number = 0): BillData | null {
-    const order = this.getOrderById(orderId);
-    if (!order) return null;
-
-    // Permanently close current order group for that dining session
-    const targetSessionToken = order.sessionToken;
-    const sessionOrders = store.orders.filter(
-      (o) => o.tableId === order.tableId && (o.sessionToken === targetSessionToken || o.id === order.id)
-    );
-
-    const discountPct = Math.max(0, Math.min(100, discountPercentage));
-    const subtotal = sessionOrders.reduce((sum, o) => sum + o.subtotal, 0);
-    const tax = Math.round(subtotal * CAFE_INFO.taxRate * 100) / 100;
-    const cgst = Math.round((tax / 2) * 100) / 100;
-    const sgst = Math.round((tax / 2) * 100) / 100;
-    const discountAmount = Math.round(subtotal * (discountPct / 100) * 100) / 100;
-    const total = Math.round(Math.max(0, subtotal + tax - discountAmount) * 100) / 100;
-
-    for (const o of sessionOrders) {
-      o.billGenerated = true;
-      o.sessionStatus = 'BILL_GENERATED';
-      o.discountPercentage = discountPct;
-      o.discountAmount = discountAmount;
-      o.updatedAt = new Date().toISOString();
-    }
-
-    // Bill generation permanently frees the physical table immediately!
-    const table = this.getTable(order.tableId);
-    if (table) {
-      table.status = 'AVAILABLE';
-    }
-
-    return {
-      billNumber: `BILL-${order.id.replace('VV-', '')}-${new Date(order.createdAt).getFullYear()}`,
-      orderId: order.id,
-      diningSessionId: order.diningSessionId || targetSessionToken,
-      sessionStatus: 'BILL_GENERATED',
-      tableStatus: 'AVAILABLE',
-      cafe: CAFE_INFO,
-      tableNumber: order.tableNumber,
-      customerName: order.customerName,
-      customerMobile: order.customerMobile,
-      specialInstructions: order.specialInstructions,
-      items: sessionOrders.flatMap((so) =>
-        so.items.map((i) => {
-          const canonical = MENU_ITEMS.find((m) => m.id === i.menuItemId || m.name === i.name);
-          const extrasList: { name: string; price: number; total: number }[] = [];
-          if (i.selectedAddOns && i.selectedAddOns.length > 0) {
-            for (const addOnName of i.selectedAddOns) {
-              const matched = canonical?.addOns?.find((a) => a.name === addOnName);
-              const addOnPrice = matched ? matched.price : 0;
-              extrasList.push({
-                name: addOnName,
-                price: addOnPrice,
-                total: addOnPrice * i.quantity,
-              });
+      const current = sessionOrders.find((o) => o.id === order.id) || order;
+      return {
+        billNumber: `BILL-${order.id.replace('VV-', '')}-${new Date(order.createdAt).getFullYear()}`,
+        orderId: order.id,
+        diningSessionId: order.diningSessionId || order.sessionToken,
+        sessionStatus: 'BILL_GENERATED',
+        tableStatus: 'AVAILABLE',
+        cafe: CAFE_INFO,
+        tableNumber: order.tableNumber,
+        customerName: order.customerName,
+        customerMobile: order.customerMobile,
+        specialInstructions: order.specialInstructions,
+        items: sessionOrders.flatMap((so) =>
+          so.items.map((i) => {
+            const canonical = MENU_ITEMS.find((m) => m.id === i.menuItemId || m.name === i.name);
+            const extrasList: { name: string; price: number; total: number }[] = [];
+            if (i.selectedAddOns && i.selectedAddOns.length > 0) {
+              for (const addOnName of i.selectedAddOns) {
+                const matched = canonical?.addOns?.find((a) => a.name === addOnName);
+                const addOnPrice = matched ? matched.price : 0;
+                extrasList.push({
+                  name: addOnName,
+                  price: addOnPrice,
+                  total: addOnPrice * i.quantity,
+                });
+              }
             }
-          }
-          const sumExtrasUnit = extrasList.reduce((acc, e) => acc + e.price, 0);
-          const baseUnitPrice = canonical ? canonical.price : Math.max(0, i.price - sumExtrasUnit);
-          const baseTotalPrice = baseUnitPrice * i.quantity;
+            const sumExtrasUnit = extrasList.reduce((acc, e) => acc + e.price, 0);
+            const baseUnitPrice = canonical ? canonical.price : Math.max(0, i.price - sumExtrasUnit);
+            const baseTotalPrice = baseUnitPrice * i.quantity;
 
-          return {
-            name: i.name,
-            quantity: i.quantity,
-            unitPrice: i.price,
-            totalPrice: i.price * i.quantity,
-            baseUnitPrice,
-            baseTotalPrice,
-            extras: extrasList.length > 0 ? extrasList : undefined,
-            notes: [
-              i.selectedOptions ? Object.values(i.selectedOptions).join(', ') : '',
-            ]
-              .filter(Boolean)
-              .join(' | '),
-          };
-        })
-      ),
-      subtotal,
-      cgst,
-      sgst,
-      taxAmount: tax,
-      discountPercentage: discountPct,
-      discountAmount,
-      total,
-      paymentStatus: order.paymentStatus,
-      createdAt: order.createdAt,
-    };
+            return {
+              name: i.name,
+              quantity: i.quantity,
+              unitPrice: i.price,
+              totalPrice: i.price * i.quantity,
+              baseUnitPrice,
+              baseTotalPrice,
+              extras: extrasList.length > 0 ? extrasList : undefined,
+              notes: [i.selectedOptions ? Object.values(i.selectedOptions).join(', ') : '']
+                .filter(Boolean)
+                .join(' | '),
+            };
+          })
+        ),
+        subtotal,
+        cgst,
+        sgst,
+        taxAmount: tax,
+        discountPercentage: discountPct,
+        discountAmount,
+        total,
+        paymentStatus: current.paymentStatus,
+        createdAt: order.createdAt,
+      };
+    });
   },
 
-  createTable(tableNumber: number, capacity: number = 4, section: string = 'A/C'): TableInfo {
-    const newTable = buildTable(tableNumber, capacity, section);
-    store.tables.push(newTable);
-    store.tables.sort((a, b) => a.tableNumber - b.tableNumber);
-    return newTable;
+  async createTable(tableNumber: number, capacity: number = 4, section: string = 'A/C'): Promise<TableInfo> {
+    return withWrite(async (repo) => {
+      const existing = findTable(await repo.listTables(), tableNumber.toString());
+      if (existing) return existing;
+      const newTable = buildTable(tableNumber, capacity, section);
+      await repo.saveTables([newTable]);
+      return newTable;
+    });
   },
 
-  deleteTable(tableId: string): boolean {
-    const idx = store.tables.findIndex(
-      (t) => t.id.toLowerCase() === tableId.toLowerCase() || t.tableNumber.toString() === tableId
-    );
-    if (idx === -1) return false;
-    store.tables.splice(idx, 1);
-    return true;
+  async deleteTable(tableId: string): Promise<boolean> {
+    return withWrite(async (repo) => {
+      const table = await loadTable(repo, tableId);
+      return table ? repo.deleteTable(table.id) : false;
+    });
   },
 
-  updateTableStatus(tableId: string, status: TableStatus): TableInfo | null {
-    const table = this.getTable(tableId);
-    if (!table) return null;
-    table.status = status;
-    if (status === 'OCCUPIED' && !table.seatedAt) {
-      table.seatedAt = new Date().toISOString();
-    } else if (status === 'AVAILABLE') {
+  async updateTableStatus(tableId: string, status: TableStatus): Promise<TableInfo | null> {
+    return withWrite(async (repo) => {
+      const table = await loadTable(repo, tableId);
+      if (!table) return null;
+      table.status = status;
+      if (status === 'OCCUPIED' && !table.seatedAt) {
+        table.seatedAt = new Date().toISOString();
+      } else if (status === 'AVAILABLE') {
+        table.seatedAt = undefined;
+      }
+      await repo.saveTables([table]);
+      return table;
+    });
+  },
+
+  async swipeTable(sourceTableId: string, destTableId: string) {
+    return withWrite(async (repo) => {
+      const tables = await repo.listTables();
+      const source = findTable(tables, sourceTableId);
+      const dest = findTable(tables, destTableId);
+      if (!source || !dest) return null;
+
+      dest.status = source.status;
+      dest.seatedAt = source.seatedAt;
+      source.status = 'AVAILABLE';
+      source.seatedAt = undefined;
+
+      // Migrate all unpaid orders for source table to dest table
+      const activeOrders = await repo.listOrders({ tableId: source.id, unpaidOnly: true });
+      const now = new Date().toISOString();
+      for (const ord of activeOrders) {
+        ord.tableId = dest.id;
+        ord.tableNumber = dest.tableNumber;
+        ord.updatedAt = now;
+      }
+
+      await repo.saveOrders(activeOrders);
+      await repo.saveTables([source, dest]);
+      return { source, dest, activeOrders };
+    });
+  },
+
+  async clearTable(tableId: string): Promise<boolean> {
+    return withWrite(async (repo) => {
+      const table = await loadTable(repo, tableId);
+      if (!table) return false;
+      table.status = 'AVAILABLE';
       table.seatedAt = undefined;
-    }
-    return table;
-  },
 
-  swipeTable(sourceTableId: string, destTableId: string) {
-    const source = this.getTable(sourceTableId);
-    const dest = this.getTable(destTableId);
-    if (!source || !dest) return null;
-
-    dest.status = source.status;
-    dest.seatedAt = source.seatedAt;
-    source.status = 'AVAILABLE';
-    source.seatedAt = undefined;
-
-    // Migrate all unclosed/pending orders for source table to dest table
-    const activeOrders = store.orders.filter(
-      (o) => o.tableId === source.id && o.paymentStatus !== 'PAID'
-    );
-    for (const ord of activeOrders) {
-      ord.tableId = dest.id;
-      ord.tableNumber = dest.tableNumber;
-      ord.updatedAt = new Date().toISOString();
-    }
-
-    return { source, dest, activeOrders };
-  },
-
-  clearTable(tableId: string): boolean {
-    const table = this.getTable(tableId);
-    if (!table) return false;
-    table.status = 'AVAILABLE';
-    table.seatedAt = undefined;
-
-    // Mark pending orders for table as paid/closed
-    const tableOrders = store.orders.filter(
-      (o) => o.tableId === table.id && o.paymentStatus !== 'PAID'
-    );
-    for (const ord of tableOrders) {
-      ord.paymentStatus = 'PAID';
-      ord.sessionStatus = 'CLOSED';
-      ord.status = 'COMPLETED';
-      ord.updatedAt = new Date().toISOString();
-    }
-    return true;
+      // Mark pending orders for table as paid/closed
+      const tableOrders = await repo.listOrders({ tableId: table.id, unpaidOnly: true });
+      const now = new Date().toISOString();
+      for (const ord of tableOrders) {
+        ord.paymentStatus = 'PAID';
+        ord.sessionStatus = 'CLOSED';
+        ord.status = 'COMPLETED';
+        ord.updatedAt = now;
+      }
+      await repo.saveOrders(tableOrders);
+      await repo.saveTables([table]);
+      return true;
+    });
   },
 
   /**
@@ -483,7 +498,7 @@ export const CafeStore = {
    * Items must already be validated and priced by the caller.
    * Appends to the table's open (unbilled) dining session, or starts a new one.
    */
-  addStaffOrder(
+  async addStaffOrder(
     tableId: string,
     data: {
       items: CartItem[];
@@ -491,61 +506,64 @@ export const CafeStore = {
       customerMobile?: string;
       specialInstructions?: string;
     }
-  ): { success: boolean; order?: Order; error?: string } {
-    const table = this.getTable(tableId);
-    if (!table) {
-      return { success: false, error: `Table '${tableId}' does not exist` };
-    }
-    if (!data.items || data.items.length === 0) {
-      return { success: false, error: 'Add at least one item' };
-    }
+  ): Promise<{ success: boolean; order?: Order; error?: string }> {
+    return withWrite(async (repo) => {
+      const table = await loadTable(repo, tableId);
+      if (!table) {
+        return { success: false, error: `Table '${tableId}' does not exist` };
+      }
+      if (!data.items || data.items.length === 0) {
+        return { success: false, error: 'Add at least one item' };
+      }
 
-    const openOrder = store.orders.find(
-      (o) =>
-        o.tableId === table.id &&
-        o.paymentStatus !== 'PAID' &&
-        !o.billGenerated &&
-        o.sessionStatus !== 'BILL_GENERATED' &&
-        o.sessionStatus !== 'CLOSED' &&
-        o.status !== 'CANCELLED'
-    );
+      const unpaid = await repo.listOrders({ tableId: table.id, unpaidOnly: true });
+      const openOrder = unpaid.find(
+        (o) =>
+          !o.billGenerated &&
+          o.sessionStatus !== 'BILL_GENERATED' &&
+          o.sessionStatus !== 'CLOSED' &&
+          o.status !== 'CANCELLED'
+      );
 
-    const subtotal = data.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-    const now = new Date().toISOString();
+      const subtotal = data.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+      const now = new Date().toISOString();
 
-    const newOrder: Order = {
-      id: `VV-${store.orderCounter++}`,
-      cafeId: CAFE_INFO.id,
-      tableId: table.id,
-      tableNumber: table.tableNumber,
-      sessionToken: openOrder?.sessionToken || `sess_${table.id}_${Date.now()}`,
-      customerName: data.customerName?.trim() || openOrder?.customerName || 'Walk-in Guest',
-      customerMobile: data.customerMobile?.trim() || openOrder?.customerMobile || '',
-      specialInstructions: data.specialInstructions?.trim() || undefined,
-      items: data.items,
-      subtotal,
-      tax: 0,
-      total: subtotal,
-      status: 'ORDER_PLACED',
-      paymentStatus: 'PENDING',
-      sessionStatus: 'OPEN',
-      billGenerated: false,
-      createdAt: now,
-      updatedAt: now,
-    };
+      const newOrder: Order = {
+        id: `VV-${await repo.nextOrderNumber()}`,
+        cafeId: CAFE_INFO.id,
+        tableId: table.id,
+        tableNumber: table.tableNumber,
+        sessionToken: openOrder?.sessionToken || `sess_${table.id}_${Date.now()}`,
+        customerName: data.customerName?.trim() || openOrder?.customerName || 'Walk-in Guest',
+        customerMobile: data.customerMobile?.trim() || openOrder?.customerMobile || '',
+        specialInstructions: data.specialInstructions?.trim() || undefined,
+        items: data.items,
+        subtotal,
+        tax: 0,
+        total: subtotal,
+        status: 'ORDER_PLACED',
+        paymentStatus: 'PENDING',
+        sessionStatus: 'OPEN',
+        billGenerated: false,
+        createdAt: now,
+        updatedAt: now,
+      };
 
-    store.orders.unshift(newOrder);
-    table.status = 'OCCUPIED';
-    if (!table.seatedAt) table.seatedAt = now;
+      table.status = 'OCCUPIED';
+      if (!table.seatedAt) table.seatedAt = now;
 
-    return { success: true, order: newOrder };
+      await repo.saveOrders([newOrder]);
+      await repo.saveTables([table]);
+      return { success: true, order: newOrder };
+    });
   },
 
   /** Wipes all orders, bills and table changes, restoring the 18 default tables. */
-  resetAllData(): { tables: number } {
-    store.tables = createInitialTables();
-    store.orders = [];
-    store.orderCounter = INITIAL_ORDER_COUNTER;
-    return { tables: store.tables.length };
+  async resetAllData(): Promise<{ tables: number }> {
+    return withWrite(async (repo) => {
+      const tables = createInitialTables();
+      await repo.resetAll(tables);
+      return { tables: tables.length };
+    });
   },
 };

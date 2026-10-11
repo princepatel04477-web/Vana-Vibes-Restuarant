@@ -29,8 +29,12 @@ export interface ExportFilters {
   staffRole?: string;
 }
 
+export type ExportFormat = 'xlsx' | 'csv';
+
 export interface ExportRequest {
   categories: string[];
+  /** 'xlsx' = one Excel workbook with a sheet per category; 'csv' = CSV (ZIP for several). */
+  format?: ExportFormat;
   dateRange: ExportDateRange;
   startDate?: string;
   endDate?: string;
@@ -108,7 +112,9 @@ export const exportApi = {
     }
 
     let filename =
-      payload.categories.length === 1
+      (payload.format || 'xlsx') === 'xlsx'
+        ? 'van-vibes-data.xlsx'
+        : payload.categories.length === 1
         ? `van-vibes-${payload.categories[0]}.csv`
         : 'van-vibes-export.zip';
 

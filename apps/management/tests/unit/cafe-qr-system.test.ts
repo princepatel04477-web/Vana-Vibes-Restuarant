@@ -3,8 +3,8 @@ import { CafeStore } from '@/lib/cafe-store';
 import { MENU_CATEGORIES, MENU_ITEMS } from '@/data/vaan-vibes-menu';
 
 describe('Vaan Vibes QR Code & Table Security', () => {
-  it('should have configured tables with secure tokens', () => {
-    const tables = CafeStore.getAllTables();
+  it('should have configured tables with secure tokens', async () => {
+    const tables = await CafeStore.getAllTables();
     expect(tables.length).toBeGreaterThanOrEqual(12);
 
     for (const table of tables) {
@@ -15,32 +15,32 @@ describe('Vaan Vibes QR Code & Table Security', () => {
     }
   });
 
-  it('should validate official table and token', () => {
-    const table01 = CafeStore.getTable('T01');
+  it('should validate official table and token', async () => {
+    const table01 = await CafeStore.getTable('T01');
     expect(table01).toBeDefined();
 
     if (table01) {
-      const validation = CafeStore.validateTableQR('T01', table01.token);
+      const validation = await CafeStore.validateTableQR('T01', table01.token);
       expect(validation.valid).toBe(true);
       expect(validation.table?.id).toBe('T01');
     }
   });
 
-  it('should reject tampered or invalid QR tokens to prevent unauthorized table orders', () => {
-    const tamperedValidation = CafeStore.validateTableQR('T12', 'forged_fake_token_123');
+  it('should reject tampered or invalid QR tokens to prevent unauthorized table orders', async () => {
+    const tamperedValidation = await CafeStore.validateTableQR('T12', 'forged_fake_token_123');
     expect(tamperedValidation.valid).toBe(false);
     expect(tamperedValidation.error).toContain('Invalid or forged QR code');
   });
 
-  it('should reject non-existent tables', () => {
-    const nonExistent = CafeStore.validateTableQR('T99', 'token_does_not_matter');
+  it('should reject non-existent tables', async () => {
+    const nonExistent = await CafeStore.validateTableQR('T99', 'token_does_not_matter');
     expect(nonExistent.valid).toBe(false);
     expect(nonExistent.error).toContain('does not exist');
   });
 });
 
 describe('Vaan Vibes PDF Menu Source of Truth', () => {
-  it('should contain all 19 categories extracted from PDF', () => {
+  it('should contain all 19 categories extracted from PDF', async () => {
     // 19 categories + 'all' filter
     expect(MENU_CATEGORIES.length).toBe(20);
 
@@ -66,7 +66,7 @@ describe('Vaan Vibes PDF Menu Source of Truth', () => {
     expect(categorySlugs).toContain('dessert');
   });
 
-  it('should accurately verify specific PDF menu items and exact prices', () => {
+  it('should accurately verify specific PDF menu items and exact prices', async () => {
     // Page 2: Hot Coffee
     const espresso = MENU_ITEMS.find((i) => i.name === 'Espresso');
     expect(espresso).toBeDefined();
@@ -99,12 +99,12 @@ describe('Vaan Vibes PDF Menu Source of Truth', () => {
 });
 
 describe('Vaan Vibes Order Creation & Billing Calculations', () => {
-  it('should calculate server-side totals and 5% GST correctly', () => {
-    const table04 = CafeStore.getTable('T04');
+  it('should calculate server-side totals and 5% GST correctly', async () => {
+    const table04 = await CafeStore.getTable('T04');
     expect(table04).toBeDefined();
 
     if (table04) {
-      const orderRes = CafeStore.createOrder({
+      const orderRes = await CafeStore.createOrder({
         tableId: table04.id,
         token: table04.token,
         sessionToken: 'sess_test_123',
@@ -144,20 +144,20 @@ describe('Vaan Vibes Order Creation & Billing Calculations', () => {
       expect(order.paymentStatus).toBe('PENDING');
 
       // Test status progression
-      const acceptedRes = CafeStore.updateOrderStatus(order.id, 'ACCEPTED');
+      const acceptedRes = await CafeStore.updateOrderStatus(order.id, 'ACCEPTED');
       expect(acceptedRes.order?.status).toBe('ACCEPTED');
 
-      const prepRes = CafeStore.updateOrderStatus(order.id, 'PREPARING');
+      const prepRes = await CafeStore.updateOrderStatus(order.id, 'PREPARING');
       expect(prepRes.order?.status).toBe('PREPARING');
 
-      const readyRes = CafeStore.updateOrderStatus(order.id, 'READY');
+      const readyRes = await CafeStore.updateOrderStatus(order.id, 'READY');
       expect(readyRes.order?.status).toBe('READY');
 
-      const servedRes = CafeStore.updateOrderStatus(order.id, 'SERVED');
+      const servedRes = await CafeStore.updateOrderStatus(order.id, 'SERVED');
       expect(servedRes.order?.status).toBe('SERVED');
 
       // Test billing generation
-      const bill = CafeStore.generateBill(order.id);
+      const bill = await CafeStore.generateBill(order.id);
       expect(bill).toBeDefined();
       expect(bill?.billNumber).toContain('BILL-');
       expect(bill?.subtotal).toBe(720);
@@ -167,10 +167,10 @@ describe('Vaan Vibes Order Creation & Billing Calculations', () => {
     }
   });
 
-  it('should reject orders with invalid customer name or mobile number', () => {
-    const table02 = CafeStore.getTable('T02');
+  it('should reject orders with invalid customer name or mobile number', async () => {
+    const table02 = await CafeStore.getTable('T02');
     if (table02) {
-      const invalidName = CafeStore.createOrder({
+      const invalidName = await CafeStore.createOrder({
         tableId: table02.id,
         token: table02.token,
         sessionToken: 'sess_bad',
@@ -180,7 +180,7 @@ describe('Vaan Vibes Order Creation & Billing Calculations', () => {
       });
       expect(invalidName.success).toBe(false);
 
-      const invalidMobile = CafeStore.createOrder({
+      const invalidMobile = await CafeStore.createOrder({
         tableId: table02.id,
         token: table02.token,
         sessionToken: 'sess_bad',
@@ -192,15 +192,15 @@ describe('Vaan Vibes Order Creation & Billing Calculations', () => {
     }
   });
 
-  it('should permanently close order group upon bill generation and enforce new session for next orders on same table', () => {
-    const table12 = CafeStore.getTable('T12');
+  it('should permanently close order group upon bill generation and enforce new session for next orders on same table', async () => {
+    const table12 = await CafeStore.getTable('T12');
     expect(table12).toBeDefined();
     if (!table12) return;
 
     const initialSessionToken = 'sess_t12_initial_customer';
 
     // 1. Customer places Order #1 before bill generation
-    const order1Res = CafeStore.createOrder({
+    const order1Res = await CafeStore.createOrder({
       tableId: table12.id,
       token: table12.token,
       sessionToken: initialSessionToken,
@@ -213,10 +213,10 @@ describe('Vaan Vibes Order Creation & Billing Calculations', () => {
     expect(order1Res.success).toBe(true);
     const order1 = order1Res.order!;
     expect(order1.sessionToken).toBe(initialSessionToken);
-    expect(table12.status).toBe('OCCUPIED');
+    expect((await CafeStore.getTable('T12'))?.status).toBe('OCCUPIED');
 
     // 2. Customer adds Order #2 before bill generation -> belongs to same session
-    const order2Res = CafeStore.createOrder({
+    const order2Res = await CafeStore.createOrder({
       tableId: table12.id,
       token: table12.token,
       sessionToken: initialSessionToken,
@@ -232,23 +232,25 @@ describe('Vaan Vibes Order Creation & Billing Calculations', () => {
 
     // 3. Admin generates Bill for Order #1
     // CRITICAL: Bill generation permanently closes current order group & frees table immediately!
-    const bill = CafeStore.generateBill(order1.id);
+    const bill = await CafeStore.generateBill(order1.id);
     expect(bill).toBeDefined();
     expect(bill?.sessionStatus).toBe('BILL_GENERATED');
     expect(bill?.tableStatus).toBe('AVAILABLE');
-    expect(table12.status).toBe('AVAILABLE');
+    expect((await CafeStore.getTable('T12'))?.status).toBe('AVAILABLE');
 
     // Both orders in the session are marked BILL_GENERATED
-    expect(order1.billGenerated).toBe(true);
-    expect(order1.sessionStatus).toBe('BILL_GENERATED');
-    expect(order2.billGenerated).toBe(true);
-    expect(order2.sessionStatus).toBe('BILL_GENERATED');
+    const billed1 = await CafeStore.getOrderById(order1.id);
+    const billed2 = await CafeStore.getOrderById(order2.id);
+    expect(billed1?.billGenerated).toBe(true);
+    expect(billed1?.sessionStatus).toBe('BILL_GENERATED');
+    expect(billed2?.billGenerated).toBe(true);
+    expect(billed2?.sessionStatus).toBe('BILL_GENERATED');
 
     // Payment is still PENDING!
-    expect(order1.paymentStatus).toBe('PENDING');
+    expect(billed1?.paymentStatus).toBe('PENDING');
 
     // 4. A new customer arrives at Table 12 and places Order #3 (while payment for Order #1 is still PENDING)
-    const order3Res = CafeStore.createOrder({
+    const order3Res = await CafeStore.createOrder({
       tableId: table12.id,
       token: table12.token,
       sessionToken: initialSessionToken, // Even if browser submitted old sessionToken!
@@ -269,23 +271,25 @@ describe('Vaan Vibes Order Creation & Billing Calculations', () => {
     expect(order3.id).not.toBe(order2.id);
 
     // 5. Querying orders for initial session returns only Order 1 and 2
-    const session1Orders = CafeStore.getOrdersBySession(table12.id, initialSessionToken);
+    const session1Orders = await CafeStore.getOrdersBySession(table12.id, initialSessionToken);
     expect(session1Orders.length).toBe(2);
     expect(session1Orders.map((o) => o.id)).toContain(order1.id);
     expect(session1Orders.map((o) => o.id)).toContain(order2.id);
     expect(session1Orders.map((o) => o.id)).not.toContain(order3.id);
 
     // Querying orders for new session returns only Order 3
-    const session2Orders = CafeStore.getOrdersBySession(table12.id, order3.sessionToken);
+    const session2Orders = await CafeStore.getOrdersBySession(table12.id, order3.sessionToken);
     expect(session2Orders.length).toBe(1);
     expect(session2Orders[0].id).toBe(order3.id);
 
     // 6. Settle Order 1 via UPI -> Payment settled does not affect Order 3
-    CafeStore.settlePayment(order1.id, 'UPI');
-    expect(order1.paymentStatus).toBe('PAID');
-    expect(order1.sessionStatus).toBe('CLOSED');
+    await CafeStore.settlePayment(order1.id, 'UPI');
+    const settled1 = await CafeStore.getOrderById(order1.id);
+    expect(settled1?.paymentStatus).toBe('PAID');
+    expect(settled1?.sessionStatus).toBe('CLOSED');
+    expect(settled1?.paymentMethod).toBe('UPI');
     // Table remains OCCUPIED because Order 3 (new session) is actively running on Table 12!
-    expect(table12.status).toBe('OCCUPIED');
+    expect((await CafeStore.getTable('T12'))?.status).toBe('OCCUPIED');
   });
 });
 

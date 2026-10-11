@@ -37,12 +37,12 @@ export async function GET(request: NextRequest) {
   }
 
   if (all) {
-    const orders = CafeStore.getAllOrders();
+    const orders = await CafeStore.getAllOrders();
     return NextResponse.json({ orders });
   }
 
   if (tableId) {
-    const orders = CafeStore.getOrdersBySession(tableId, sessionToken);
+    const orders = await CafeStore.getOrdersBySession(tableId, sessionToken);
     return NextResponse.json({ orders });
   }
 
@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
       if (backendRes.ok) {
         const backendOrder = await backendRes.json();
         // Sync local cache
-        CafeStore.createOrder({
+        await CafeStore.createOrder({
           tableId,
           token,
           sessionToken: backendOrder.sessionToken || backendOrder.diningSessionId || sessionToken,
@@ -121,7 +121,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Offline / local fallback to CafeStore
-    const result = CafeStore.createOrder({
+    const result = await CafeStore.createOrder({
       tableId,
       token,
       sessionToken,

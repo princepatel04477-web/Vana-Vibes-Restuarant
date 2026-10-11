@@ -212,6 +212,20 @@ export const ServerBackend = {
       }));
   },
 
+  /** All staff accounts (admins and chefs) without passwords. */
+  getStaff(): User[] {
+    return usersStore.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        contactNumber: u.contactNumber,
+        role: u.role,
+        shift: u.shift,
+        assignedStation: u.assignedStation,
+        is_active: u.is_active,
+      }));
+  },
+
   createChef(data: {
     name: string;
     email: string;
@@ -290,19 +304,19 @@ export const ServerBackend = {
   },
 
   // --- TABLES ---
-  getTables(): TableInfo[] {
+  getTables(): Promise<TableInfo[]> {
     return CafeStore.getAllTables();
   },
 
-  createTable(tableNumber: number, capacity: number = 4, section: string = 'A/C'): TableInfo {
+  createTable(tableNumber: number, capacity: number = 4, section: string = 'A/C'): Promise<TableInfo> {
     return CafeStore.createTable(tableNumber, capacity, section);
   },
 
-  deleteTable(tableId: string): boolean {
+  deleteTable(tableId: string): Promise<boolean> {
     return CafeStore.deleteTable(tableId);
   },
 
-  updateTableStatus(tableId: string, status: TableStatus): TableInfo | null {
+  updateTableStatus(tableId: string, status: TableStatus): Promise<TableInfo | null> {
     return CafeStore.updateTableStatus(tableId, status);
   },
 
@@ -310,13 +324,13 @@ export const ServerBackend = {
     return CafeStore.swipeTable(sourceTableId, destTableId);
   },
 
-  clearTable(tableId: string): boolean {
+  clearTable(tableId: string): Promise<boolean> {
     return CafeStore.clearTable(tableId);
   },
 
   // --- ORDERS ---
-  getOrders(params?: { status?: string; table_id?: string; activity_status?: string }): Order[] {
-    let orders = CafeStore.getAllOrders();
+  async getOrders(params?: { status?: string; table_id?: string; activity_status?: string }): Promise<Order[]> {
+    let orders = await CafeStore.getAllOrders();
     if (params?.status && params.status !== 'ALL') {
       orders = orders.filter((o) => o.status === params.status);
     }
@@ -326,7 +340,7 @@ export const ServerBackend = {
     return orders;
   },
 
-  getOrder(id: string): Order | undefined {
+  getOrder(id: string): Promise<Order | undefined> {
     return CafeStore.getOrderById(id);
   },
 

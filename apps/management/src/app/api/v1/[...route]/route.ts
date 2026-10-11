@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import { ServerBackend, createToken } from '@/lib/server-backend';
 import { CafeStore } from '@/lib/cafe-store';
 import { TableStatus, OrderStatus, TableInfo, CartItem } from '@/types/cafe';
+import { ExportError, ExportRequest, generateExport, previewExport } from '@/lib/export/build-export';
 
 function corsHeaders() {
   return {
@@ -69,7 +70,7 @@ export async function GET(
 
   // 3a. /api/v1/tables/:id/qr -> Direct PNG stream
   if (route[0] === 'tables' && route.length === 3 && route[2] === 'qr') {
-    const table = CafeStore.getTable(route[1]);
+    const table = await CafeStore.getTable(route[1]);
     if (!table) {
       return NextResponse.json({ detail: 'Table not found' }, { status: 404, headers: corsHeaders() });
     }
@@ -101,7 +102,7 @@ export async function GET(
   // 3b. /api/v1/tables/:id/standee
   if (route[0] === 'tables' && route.length === 3 && route[2] === 'standee') {
     const tableId = route[1];
-    const table = CafeStore.getTable(tableId);
+    const table = await CafeStore.getTable(tableId);
     if (!table) {
       return NextResponse.json({ detail: 'Table not found' }, { status: 404, headers: corsHeaders() });
     }
@@ -136,7 +137,7 @@ export async function GET(
 
   // 4. /api/v1/tables
   if (path === 'tables') {
-    const tables = ServerBackend.getTables();
+    const tables = await ServerBackend.getTables();
     return NextResponse.json(tables, { headers: corsHeaders() });
   }
 
@@ -145,13 +146,13 @@ export async function GET(
     const status = searchParams.get('status') || undefined;
     const table_id = searchParams.get('table_id') || undefined;
     const activity_status = searchParams.get('activity_status') || undefined;
-    const orders = ServerBackend.getOrders({ status, table_id, activity_status });
+    const orders = await ServerBackend.getOrders({ status, table_id, activity_status });
     return NextResponse.json(orders, { headers: corsHeaders() });
   }
 
   // 6. /api/v1/orders/:id
   if (route[0] === 'orders' && route.length === 2) {
-    const order = ServerBackend.getOrder(route[1]);
+    const order = await ServerBackend.getOrder(route[1]);
     if (!order) {
       return NextResponse.json({ detail: 'Order not found' }, { status: 404, headers: corsHeaders() });
     }
@@ -179,7 +180,7 @@ export async function GET(
 
   // 10. /api/v1/billing/ledger
   if (path === 'billing/ledger') {
-    const orders = CafeStore.getAllOrders().filter((o) => o.billGenerated || o.paymentStatus === 'PAID');
+    const orders = (await CafeStore.getAllOrders()).filter((o) => o.billGenerated || o.paymentStatus === 'PAID');
     const ledger = orders.map((o) => ({
       id: o.id,
       orderId: o.id,
@@ -205,7 +206,7 @@ export async function GET(
 
   // 11. /api/v1/billing/pending
   if (path === 'billing/pending') {
-    const orders = CafeStore.getAllOrders().filter((o) => o.paymentStatus !== 'PAID');
+    const orders = (await CafeStore.getAllOrders()).filter((o) => o.paymentStatus !== 'PAID');
     const pending = orders.map((o) => ({
       id: o.id,
       orderId: o.id,
@@ -229,7 +230,7 @@ export async function GET(
 
   // 12. /api/v1/billing/:orderId
   if (route[0] === 'billing' && route.length === 2 && !['ledger', 'pending', 'sessions'].includes(route[1])) {
-    const bill = CafeStore.generateBill(route[1]);
+    const bill = await CafeStore.generateBill(route[1]);
     if (!bill) {
       return NextResponse.json({ detail: 'Order receipt not found' }, { status: 404, headers: corsHeaders() });
     }
@@ -238,8 +239,8 @@ export async function GET(
 
   // 13. /api/v1/dashboard/summary
   if (path === 'dashboard/summary') {
-    const orders = CafeStore.getAllOrders();
-    const tables = CafeStore.getAllTables();
+    const orders = await CafeStore.getAllOrders();
+    const tables = await CafeStore.getAllTables();
     const occupied = tables.filter((t) => t.status === 'OCCUPIED').length;
     const kitchenPending = orders.filter((o) => ['ORDER_PLACED', 'ACCEPTED', 'PREPARING'].includes(o.status)).length;
     const settledRevenue = orders
@@ -261,7 +262,7 @@ export async function GET(
 
   // 14. /api/v1/dashboard/kitchen
   if (path === 'dashboard/kitchen') {
-    const orders = CafeStore.getAllOrders();
+    const orders = await CafeStore.getAllOrders();
     const incomingOrders = orders.filter((o) => ['ORDER_PLACED', 'ACCEPTED'].includes(o.status)).length;
     const activePrep = orders.filter((o) => o.status === 'PREPARING').length;
     const completedToday = orders.filter((o) => ['SERVED', 'COMPLETED'].includes(o.status)).length;
@@ -374,7 +375,7 @@ export async function POST(
 
   // 5. /api/v1/orders
   if (path === 'orders') {
-    const result = CafeStore.createOrder(body as unknown as Parameters<typeof CafeStore.createOrder>[0]);
+    const result = await CafeStore.createOrder(body as unknown as Parameters<typeof CafeStore.createOrder>[0]);
     if (!result.success) {
       return NextResponse.json({ detail: result.error || 'Failed to create order' }, { status: 400, headers: corsHeaders() });
     }
@@ -383,31 +384,31 @@ export async function POST(
 
   // 6. /api/v1/orders/:id/accept
   if (route[0] === 'orders' && route.length === 3 && route[2] === 'accept') {
-    const res = CafeStore.updateOrderStatus(route[1], 'ACCEPTED');
+    const res = await CafeStore.updateOrderStatus(route[1], 'ACCEPTED');
     return NextResponse.json(res.order || { id: route[1], status: 'ACCEPTED' }, { headers: corsHeaders() });
   }
 
   // 7. /api/v1/orders/:id/done
   if (route[0] === 'orders' && route.length === 3 && route[2] === 'done') {
-    const res = CafeStore.updateOrderStatus(route[1], 'PREPARING');
+    const res = await CafeStore.updateOrderStatus(route[1], 'PREPARING');
     return NextResponse.json(res.order || { id: route[1], status: 'PREPARING' }, { headers: corsHeaders() });
   }
 
   // 8. /api/v1/orders/:id/serve
   if (route[0] === 'orders' && route.length === 3 && route[2] === 'serve') {
-    const res = CafeStore.updateOrderStatus(route[1], 'SERVED');
+    const res = await CafeStore.updateOrderStatus(route[1], 'SERVED');
     return NextResponse.json(res.order || { id: route[1], status: 'SERVED' }, { headers: corsHeaders() });
   }
 
   // 9. /api/v1/orders/:id/complete
   if (route[0] === 'orders' && route.length === 3 && route[2] === 'complete') {
-    const res = CafeStore.updateOrderStatus(route[1], 'COMPLETED');
+    const res = await CafeStore.updateOrderStatus(route[1], 'COMPLETED');
     return NextResponse.json(res.order || { id: route[1], status: 'COMPLETED' }, { headers: corsHeaders() });
   }
 
   // 10. /api/v1/orders/:id/cancel
   if (route[0] === 'orders' && route.length === 3 && route[2] === 'cancel') {
-    const res = CafeStore.updateOrderStatus(route[1], 'CANCELLED');
+    const res = await CafeStore.updateOrderStatus(route[1], 'CANCELLED');
     return NextResponse.json(
       { message: 'Order successfully cancelled', order: res.order },
       { headers: corsHeaders() }
@@ -417,14 +418,14 @@ export async function POST(
   // 11. /api/v1/billing/:orderId/generate
   if (route[0] === 'billing' && route.length === 3 && route[2] === 'generate') {
     const discount = Number(body.discount_percentage || body.discountPercentage || 0);
-    const bill = CafeStore.generateBill(route[1], discount);
+    const bill = await CafeStore.generateBill(route[1], discount);
     return NextResponse.json(bill, { headers: corsHeaders() });
   }
 
   // 12. /api/v1/billing/:orderId/settle
   if (route[0] === 'billing' && route.length === 3 && route[2] === 'settle') {
     const method = typeof body.paymentMethod === 'string' ? body.paymentMethod : typeof body.payment_method === 'string' ? body.payment_method : 'CASH';
-    const settled = CafeStore.settlePayment(route[1], method);
+    const settled = await CafeStore.settlePayment(route[1], method);
     const invoice = {
       id: `INV-${Date.now()}`,
       orderId: route[1],
@@ -447,7 +448,7 @@ export async function POST(
   if (path === 'tables/swipe') {
     const sourceTableId = typeof body.sourceTableId === 'string' ? body.sourceTableId : '';
     const destinationTableId = typeof body.destinationTableId === 'string' ? body.destinationTableId : '';
-    const res = ServerBackend.swipeTable(sourceTableId, destinationTableId);
+    const res = await ServerBackend.swipeTable(sourceTableId, destinationTableId);
     if (!res) {
       return NextResponse.json({ detail: 'Table not found or invalid transfer' }, { status: 400, headers: corsHeaders() });
     }
@@ -471,13 +472,13 @@ export async function POST(
     if (!num || isNaN(num)) {
       return NextResponse.json({ detail: 'Valid table number is required' }, { status: 400, headers: corsHeaders() });
     }
-    const created = ServerBackend.createTable(num, cap, sec);
+    const created = await ServerBackend.createTable(num, cap, sec);
     return NextResponse.json(created, { status: 201, headers: corsHeaders() });
   }
 
   // 15. /api/v1/tables/:id/clear (Clear / Free Table)
   if (route[0] === 'tables' && route.length === 3 && route[2] === 'clear') {
-    const ok = ServerBackend.clearTable(route[1]);
+    const ok = await ServerBackend.clearTable(route[1]);
     return NextResponse.json({ success: ok, message: 'Table cleared' }, { headers: corsHeaders() });
   }
 
@@ -522,7 +523,7 @@ export async function POST(
       return NextResponse.json({ detail: 'Phone number must contain exactly 10 digits' }, { status: 400, headers: corsHeaders() });
     }
 
-    const result = CafeStore.addStaffOrder(route[1], {
+    const result = await CafeStore.addStaffOrder(route[1], {
       items,
       customerName: typeof body.customerName === 'string' ? body.customerName : undefined,
       customerMobile,
@@ -534,6 +535,35 @@ export async function POST(
     return NextResponse.json(result.order, { status: 201, headers: corsHeaders() });
   }
 
+  // 15d. /api/v1/export/preview & /api/v1/export/download (Admin data export: Excel / CSV)
+  if (path === 'export/preview' || path === 'export/download') {
+    const auth = requireAdmin(request);
+    if (auth.error) return auth.error;
+    const exportReq = body as unknown as ExportRequest;
+    if (!Array.isArray(exportReq.categories)) {
+      return NextResponse.json({ detail: 'Select at least one data category to export' }, { status: 400, headers: corsHeaders() });
+    }
+    try {
+      if (path === 'export/preview') {
+        return NextResponse.json(await previewExport(exportReq), { headers: corsHeaders() });
+      }
+      const file = await generateExport(exportReq);
+      return new NextResponse(Buffer.from(file.body), {
+        headers: {
+          'Content-Type': file.contentType,
+          'Content-Disposition': `attachment; filename="${file.filename}"`,
+          'Cache-Control': 'no-store',
+          ...corsHeaders(),
+        },
+      });
+    } catch (err) {
+      if (err instanceof ExportError) {
+        return NextResponse.json({ detail: err.message }, { status: 400, headers: corsHeaders() });
+      }
+      throw err;
+    }
+  }
+
   // 15c. /api/v1/admin/reset (Admin wipes all orders, bills and table changes)
   if (path === 'admin/reset') {
     const auth = requireAdmin(request);
@@ -541,13 +571,13 @@ export async function POST(
     if (body.confirm !== 'RESET') {
       return NextResponse.json({ detail: 'Type RESET to confirm' }, { status: 400, headers: corsHeaders() });
     }
-    const result = CafeStore.resetAllData();
+    const result = await CafeStore.resetAllData();
     return NextResponse.json({ message: 'All data has been reset', ...result }, { headers: corsHeaders() });
   }
 
   // 16. /api/v1/tables/:id/occupy
   if (route[0] === 'tables' && route.length === 3 && route[2] === 'occupy') {
-    const table = ServerBackend.updateTableStatus(route[1], 'OCCUPIED');
+    const table = await ServerBackend.updateTableStatus(route[1], 'OCCUPIED');
     if (!table) {
       return NextResponse.json({ detail: 'Table not found' }, { status: 404, headers: corsHeaders() });
     }
@@ -602,7 +632,7 @@ export async function PATCH(
 
   // 1. /api/v1/tables/:id/status
   if (route[0] === 'tables' && route.length === 3 && route[2] === 'status') {
-    const table = ServerBackend.updateTableStatus(route[1], body.status as TableStatus);
+    const table = await ServerBackend.updateTableStatus(route[1], body.status as TableStatus);
     if (!table) {
       return NextResponse.json({ detail: 'Table not found' }, { status: 404, headers: corsHeaders() });
     }
@@ -611,7 +641,7 @@ export async function PATCH(
 
   // 2. /api/v1/orders/:id/status
   if (route[0] === 'orders' && route.length === 3 && route[2] === 'status') {
-    const res = CafeStore.updateOrderStatus(route[1], body.status as OrderStatus);
+    const res = await CafeStore.updateOrderStatus(route[1], body.status as OrderStatus);
     return NextResponse.json(res.order, { headers: corsHeaders() });
   }
 
@@ -642,7 +672,7 @@ export async function DELETE(
 
   // 1. /api/v1/tables/:id (Delete Table)
   if (route[0] === 'tables' && route.length === 2) {
-    const ok = ServerBackend.deleteTable(route[1]);
+    const ok = await ServerBackend.deleteTable(route[1]);
     if (!ok) {
       return NextResponse.json({ detail: 'Table not found' }, { status: 404, headers: corsHeaders() });
     }

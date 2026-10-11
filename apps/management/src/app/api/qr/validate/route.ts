@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
   }
 
   // 2. Validate against local CafeStore
-  const result = CafeStore.validateTableQR(normalizedId, token);
+  const result = await CafeStore.validateTableQR(normalizedId, token);
   if (result.valid && result.table) {
     return NextResponse.json({
       valid: true,
@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
   }
 
   // 3. Fallback: if table exists in CafeStore (e.g. token missing or slight mismatch), resolve table so user can order
-  const localTable = CafeStore.getTable(normalizedId);
+  const localTable = await CafeStore.getTable(normalizedId);
   if (localTable) {
     return NextResponse.json({
       valid: true,
