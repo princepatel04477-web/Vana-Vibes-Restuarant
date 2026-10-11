@@ -27,8 +27,8 @@ describe('Data export (Excel / CSV)', () => {
       dateRange: 'all_time',
     });
 
-    expect(preview.counts).toEqual({ orders: 2, order_items: 2, bills: 1, payments: 1, tables: 18 });
-    expect(preview.total_records).toBe(24);
+    expect(preview.counts).toEqual({ orders: 2, order_items: 2, bills: 1, payments: 1, tables: 17 });
+    expect(preview.total_records).toBe(23);
   });
 
   it('builds one Excel workbook with a sheet per category', async () => {

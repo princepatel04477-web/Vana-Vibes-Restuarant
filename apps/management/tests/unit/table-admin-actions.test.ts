@@ -15,13 +15,14 @@ describe('Table dashboard admin actions', () => {
     await CafeStore.resetAllData();
   });
 
-  it('starts with exactly 18 vacant tables and no orders', async () => {
+  it('starts with Tables 01-18 except Table 13, all vacant, and no orders', async () => {
     const tables = await CafeStore.getAllTables();
-    expect(TOTAL_TABLES).toBe(18);
-    expect(tables).toHaveLength(18);
+    expect(TOTAL_TABLES).toBe(17);
+    expect(tables).toHaveLength(17);
     expect(tables.map((t) => t.id)).toEqual(
-      Array.from({ length: 18 }, (_, i) => `T${(i + 1).toString().padStart(2, '0')}`)
+      Array.from({ length: 18 }, (_, i) => `T${(i + 1).toString().padStart(2, '0')}`).filter((id) => id !== 'T13')
     );
+    expect(await CafeStore.getTable('T13')).toBeUndefined();
     expect(tables.every((t) => t.status === 'AVAILABLE')).toBe(true);
     expect(await CafeStore.getAllOrders()).toHaveLength(0);
   });
@@ -64,7 +65,7 @@ describe('Table dashboard admin actions', () => {
 
     const result = await CafeStore.resetAllData();
 
-    expect(result.tables).toBe(18);
+    expect(result.tables).toBe(17);
     expect(await CafeStore.getAllOrders()).toHaveLength(0);
     expect(await CafeStore.getTable('T25')).toBeUndefined();
     expect(await CafeStore.getTable('T02')).toBeDefined();

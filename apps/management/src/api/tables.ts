@@ -92,7 +92,7 @@ export const tablesApi = {
     });
   },
 
-  /** Admin-only: wipes all orders, bills and table changes back to the default 18 tables. */
+  /** Admin-only: wipes all orders, bills and table changes back to the default tables (01-18, no Table 13). */
   resetAllData: async (): Promise<{ message: string; tables: number }> => {
     return apiClient<{ message: string; tables: number }>('/admin/reset', {
       method: 'POST',

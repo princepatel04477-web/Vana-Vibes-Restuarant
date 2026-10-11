@@ -15,8 +15,9 @@ export const CAFE_INFO: CafeDetails = {
   taxRate: 0, // No GST
 };
 
-// The restaurant has 18 dining tables (Tables 01-18, A/C section).
-export const TOTAL_TABLES = 18;
+// The restaurant's dining tables (A/C section): Tables 01-18, without Table 13.
+export const TABLE_NUMBERS = Array.from({ length: 18 }, (_, i) => i + 1).filter((n) => n !== 13);
+export const TOTAL_TABLES = TABLE_NUMBERS.length;
 
 function buildTable(tableNumber: number, capacity: number, section: string): TableInfo {
   const pad = tableNumber.toString().padStart(2, '0');
@@ -35,10 +36,7 @@ function buildTable(tableNumber: number, capacity: number, section: string): Tab
 }
 
 function createInitialTables(): TableInfo[] {
-  return Array.from({ length: TOTAL_TABLES }, (_, i) => {
-    const num = i + 1;
-    return buildTable(num, num <= 6 ? 2 : 4, 'A/C');
-  });
+  return TABLE_NUMBERS.map((num) => buildTable(num, num <= 6 ? 2 : 4, 'A/C'));
 }
 
 setInitialTablesFactory(createInitialTables);

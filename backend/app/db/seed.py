@@ -123,9 +123,9 @@ def seed_database():
         db.add(settings_record)
         db.flush()
 
-        # 2. Tables (18 A/C Dining Tables matching restaurant floor plan)
-        print("Seeding Tables (18 A/C Tables)...")
-        for i in range(1, 19):
+        # 2. Tables (A/C Dining Tables 01-18 without Table 13, matching restaurant floor plan)
+        print("Seeding Tables (17 A/C Tables, no Table 13)...")
+        for i in [n for n in range(1, 19) if n != 13]:
             pad = f"{i:02d}"
             table_id = f"T{pad}"
             token = f"vv_sec_{table_id.lower()}_{(i * 7393 + 19283):x}"

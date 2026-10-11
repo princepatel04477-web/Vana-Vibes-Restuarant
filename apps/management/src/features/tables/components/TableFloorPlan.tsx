@@ -915,7 +915,7 @@ export function TableFloorPlan({
             </div>
             <p className="text-xs text-brand-green/75 leading-relaxed">
               This permanently deletes <span className="font-bold">all orders, KOTs and bills</span>, frees every
-              table, and restores the default 18 tables. Menu items and staff accounts are kept. This cannot be
+              table, and restores the default tables (01-18, without Table 13). Menu items and staff accounts are kept. This cannot be
               undone.
             </p>
             <div className="space-y-1">
