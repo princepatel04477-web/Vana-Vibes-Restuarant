@@ -6,6 +6,7 @@ import { BillModal } from '@/features/billing/components/BillModal';
 import { KotPrintModal } from '@/features/orders/components/KotPrintModal';
 import { tablesApi } from '@/api/tables';
 import { QrCodePreview } from '@/components/ui/QrCodePreview';
+import { buildCustomerMenuUrl } from '@/lib/qr-url';
 import {
   Users,
   Clock,
@@ -20,6 +21,7 @@ import {
   CheckCircle2,
   RefreshCw,
   Search,
+  QrCode,
 } from 'lucide-react';
 
 interface Props {
@@ -192,7 +194,11 @@ export function TableFloorPlan({
   };
 
   const handleCopyCustomerLink = (table: TableInfo) => {
-    const url = `${qrBaseUrl.replace(/\/+$/, '')}/cafe/van-vibes?table=${table.id}&token=${table.token}`;
+    const url = buildCustomerMenuUrl({
+      tableId: table.id,
+      token: table.token,
+      customBaseUrl: qrBaseUrl,
+    });
     navigator.clipboard.writeText(url);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
@@ -446,6 +452,19 @@ export function TableFloorPlan({
                     </span>
                   </div>
 
+                  {/* Top-Right: Quick QR Standee View Button */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setStandeeModalTable(table);
+                    }}
+                    className="absolute top-2 right-2 p-1 rounded-lg bg-white/80 hover:bg-white text-slate-700 shadow-2xs hover:scale-110 transition-all cursor-pointer border border-black/5"
+                    title={`View QR Standee for Table ${table.tableNumber}`}
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                  </button>
+
                   {/* Bottom: Pill Badges (Matching Image 2 circular indicators) */}
                   <div className="flex items-center justify-center gap-1.5 mt-2 flex-wrap">
                     {/* Badge 1: Order / Item Count or Guest Count */}
@@ -563,7 +582,11 @@ export function TableFloorPlan({
                 {/* Copy QR Link */}
                 <div className="p-3 bg-brand-beige-light rounded-2xl border border-brand-beige-dark flex items-center justify-between gap-2">
                   <div className="truncate text-[11px] font-mono text-brand-green/70">
-                    {qrBaseUrl.replace(/\/+$/, '')}/cafe/van-vibes?table={activeTableModal.id}
+                    {buildCustomerMenuUrl({
+                      tableId: activeTableModal.id,
+                      token: activeTableModal.token,
+                      customBaseUrl: qrBaseUrl,
+                    })}
                   </div>
                   <button
                     type="button"
@@ -715,6 +738,26 @@ export function TableFloorPlan({
                     <span>Free Table</span>
                   </button>
                 </div>
+
+                {/* QR Standee & Customer Link for Occupied Table */}
+                <div className="pt-2 border-t border-brand-beige-dark/40 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setStandeeModalTable(activeTableModal)}
+                    className="flex-1 flex items-center justify-center gap-1.5 p-2.5 rounded-xl bg-white border border-brand-beige-dark hover:bg-brand-beige text-brand-green text-xs font-bold transition-all cursor-pointer"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    <span>View Table QR Standee</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyCustomerLink(activeTableModal)}
+                    className="p-2.5 rounded-xl bg-white border border-brand-beige-dark text-xs font-bold text-brand-green hover:bg-brand-beige flex items-center gap-1 cursor-pointer"
+                    title="Copy QR Menu Link"
+                  >
+                    {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -746,7 +789,11 @@ export function TableFloorPlan({
 
             <div className="w-48 h-48 mx-auto p-3 bg-brand-beige-light rounded-2xl border border-brand-beige-dark flex items-center justify-center">
               <QrCodePreview
-                value={`${qrBaseUrl.replace(/\/+$/, '')}/cafe/van-vibes?table=${standeeModalTable.id}&token=${standeeModalTable.token}`}
+                value={buildCustomerMenuUrl({
+                  tableId: standeeModalTable.id,
+                  token: standeeModalTable.token,
+                  customBaseUrl: qrBaseUrl,
+                })}
                 tableNumber={standeeModalTable.tableNumber}
                 size={220}
               />
