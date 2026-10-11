@@ -1,6 +1,6 @@
 import { envConfig } from '@/config/env';
 import { apiClient, API_BASE_URL } from './client';
-import { TableInfo, TableStatus } from '@/types/cafe';
+import { Order, TableInfo, TableStatus } from '@/types/cafe';
 
 export interface StandeeData {
   table_id: string;
@@ -9,6 +9,12 @@ export interface StandeeData {
   capacity: number;
   scan_url: string;
   qr_image_url: string;
+}
+
+export interface StaffOrderItemInput {
+  menuItemId: string;
+  quantity: number;
+  selectedOptions?: Record<string, string>;
 }
 
 export const tablesApi = {
@@ -67,6 +73,30 @@ export const tablesApi = {
   clearTable: async (tableId: string): Promise<{ success: boolean; message: string }> => {
     return apiClient<{ success: boolean; message: string }>(`/tables/${tableId}/clear`, {
       method: 'POST',
+    });
+  },
+
+  /** Admin manually adds items to a table's running order. */
+  addItems: async (
+    tableId: string,
+    payload: {
+      items: StaffOrderItemInput[];
+      customerName?: string;
+      customerMobile?: string;
+      specialInstructions?: string;
+    }
+  ): Promise<Order> => {
+    return apiClient<Order>(`/tables/${tableId}/orders`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /** Admin-only: wipes all orders, bills and table changes back to the default 18 tables. */
+  resetAllData: async (): Promise<{ message: string; tables: number }> => {
+    return apiClient<{ message: string; tables: number }>('/admin/reset', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: 'RESET' }),
     });
   },
 };

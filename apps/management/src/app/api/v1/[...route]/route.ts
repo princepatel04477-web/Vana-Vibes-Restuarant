@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import QRCode from 'qrcode';
 import { ServerBackend, createToken } from '@/lib/server-backend';
 import { CafeStore } from '@/lib/cafe-store';
-import { TableStatus, OrderStatus } from '@/types/cafe';
+import { TableStatus, OrderStatus, TableInfo, CartItem } from '@/types/cafe';
 
 function corsHeaders() {
   return {
@@ -10,6 +10,31 @@ function corsHeaders() {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
   };
+}
+
+/**
+ * Customer ordering URL encoded into table QR codes.
+ * Uses the caller-provided frontend base when given, otherwise this deployment's own origin.
+ */
+function buildTableScanUrl(request: NextRequest, table: Pick<TableInfo, 'id' | 'token'>): string {
+  const frontendUrl = request.nextUrl.searchParams.get('frontend_url')?.trim();
+  const base = (frontendUrl && /^https?:\/\//.test(frontendUrl) ? frontendUrl : request.nextUrl.origin).replace(/\/+$/, '');
+  const url = new URL(`${base}/cafe/van-vibes/menu`);
+  url.searchParams.set('table', table.id);
+  url.searchParams.set('token', table.token);
+  return url.toString();
+}
+
+/** Returns the signed-in admin, or an error response for anyone else. */
+function requireAdmin(request: NextRequest) {
+  const user = ServerBackend.getUserFromToken(request.headers.get('authorization'));
+  if (!user) {
+    return { error: NextResponse.json({ detail: 'Not authenticated' }, { status: 401, headers: corsHeaders() }) };
+  }
+  if (user.role !== 'ADMIN') {
+    return { error: NextResponse.json({ detail: 'Only admins can do this' }, { status: 403, headers: corsHeaders() }) };
+  }
+  return { user };
 }
 
 export async function OPTIONS() {
@@ -44,12 +69,11 @@ export async function GET(
 
   // 3a. /api/v1/tables/:id/qr -> Direct PNG stream
   if (route[0] === 'tables' && route.length === 3 && route[2] === 'qr') {
-    const tableId = route[1];
-    const table = CafeStore.getTable(tableId);
-    const frontendUrl = searchParams.get('frontend_url');
-    const scanUrl = frontendUrl
-      ? `${frontendUrl.replace(/\/+$/, '')}/cafe/van-vibes?table=${table?.id || tableId}&token=${table?.token || ''}`
-      : (table?.qrCodeUrl || `https://management-rho-seven.vercel.app/cafe/van-vibes?table=${tableId}`);
+    const table = CafeStore.getTable(route[1]);
+    if (!table) {
+      return NextResponse.json({ detail: 'Table not found' }, { status: 404, headers: corsHeaders() });
+    }
+    const scanUrl = buildTableScanUrl(request, table);
 
     try {
       const buffer = await QRCode.toBuffer(scanUrl, {
@@ -64,7 +88,7 @@ export async function GET(
       return new NextResponse(new Uint8Array(buffer), {
         headers: {
           'Content-Type': 'image/png',
-          'Cache-Control': 'public, max-age=86400, s-maxage=86400',
+          'Cache-Control': 'no-store',
           ...corsHeaders(),
         },
       });
@@ -81,10 +105,7 @@ export async function GET(
     if (!table) {
       return NextResponse.json({ detail: 'Table not found' }, { status: 404, headers: corsHeaders() });
     }
-    const frontendUrl = searchParams.get('frontend_url');
-    const scanUrl = frontendUrl
-      ? `${frontendUrl.replace(/\/+$/, '')}/cafe/van-vibes?table=${table.id}&token=${table.token}`
-      : table.qrCodeUrl;
+    const scanUrl = buildTableScanUrl(request, table);
 
     let qrImageUrl = '';
     try {
@@ -458,6 +479,70 @@ export async function POST(
   if (route[0] === 'tables' && route.length === 3 && route[2] === 'clear') {
     const ok = ServerBackend.clearTable(route[1]);
     return NextResponse.json({ success: ok, message: 'Table cleared' }, { headers: corsHeaders() });
+  }
+
+  // 15b. /api/v1/tables/:id/orders (Admin manually adds items to a table)
+  if (route[0] === 'tables' && route.length === 3 && route[2] === 'orders') {
+    const auth = requireAdmin(request);
+    if (auth.error) return auth.error;
+
+    const rawItems = Array.isArray(body.items) ? (body.items as Record<string, unknown>[]) : [];
+    if (rawItems.length === 0) {
+      return NextResponse.json({ detail: 'Add at least one item' }, { status: 400, headers: corsHeaders() });
+    }
+
+    const menu = ServerBackend.getMenuItems();
+    const items: CartItem[] = [];
+    for (const raw of rawItems) {
+      const menuItem = menu.find((m) => m.id === raw.menuItemId);
+      if (!menuItem) {
+        return NextResponse.json({ detail: `Unknown menu item: ${String(raw.menuItemId)}` }, { status: 400, headers: corsHeaders() });
+      }
+      if (menuItem.isAvailable === false) {
+        return NextResponse.json({ detail: `"${menuItem.name}" is currently unavailable` }, { status: 400, headers: corsHeaders() });
+      }
+      const quantity = Math.max(1, Math.min(Math.floor(Number(raw.quantity) || 1), 50));
+      const selectedOptions =
+        raw.selectedOptions && typeof raw.selectedOptions === 'object'
+          ? (raw.selectedOptions as Record<string, string>)
+          : undefined;
+      items.push({
+        id: `${menuItem.id}-${Date.now()}-${items.length}`,
+        menuItemId: menuItem.id,
+        name: menuItem.name,
+        category: menuItem.category,
+        price: menuItem.price,
+        quantity,
+        selectedOptions,
+      });
+    }
+
+    const customerMobile = typeof body.customerMobile === 'string' ? body.customerMobile.replace(/\D/g, '') : '';
+    if (customerMobile && customerMobile.length !== 10) {
+      return NextResponse.json({ detail: 'Phone number must contain exactly 10 digits' }, { status: 400, headers: corsHeaders() });
+    }
+
+    const result = CafeStore.addStaffOrder(route[1], {
+      items,
+      customerName: typeof body.customerName === 'string' ? body.customerName : undefined,
+      customerMobile,
+      specialInstructions: typeof body.specialInstructions === 'string' ? body.specialInstructions : undefined,
+    });
+    if (!result.success) {
+      return NextResponse.json({ detail: result.error }, { status: 400, headers: corsHeaders() });
+    }
+    return NextResponse.json(result.order, { status: 201, headers: corsHeaders() });
+  }
+
+  // 15c. /api/v1/admin/reset (Admin wipes all orders, bills and table changes)
+  if (path === 'admin/reset') {
+    const auth = requireAdmin(request);
+    if (auth.error) return auth.error;
+    if (body.confirm !== 'RESET') {
+      return NextResponse.json({ detail: 'Type RESET to confirm' }, { status: 400, headers: corsHeaders() });
+    }
+    const result = CafeStore.resetAllData();
+    return NextResponse.json({ message: 'All data has been reset', ...result }, { headers: corsHeaders() });
   }
 
   // 16. /api/v1/tables/:id/occupy

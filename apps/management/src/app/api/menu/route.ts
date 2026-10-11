@@ -20,7 +20,7 @@ export async function GET() {
     // Add 'all' virtual category at top for frontend tab compatibility
     const categories = [
       { id: 'all', name: 'All Items', slug: 'all', icon: '🍽️', page: 0 },
-      ...categoriesData,
+      ...(categoriesData as { id: string }[]).filter((c) => c.id !== 'all'),
     ];
 
     return NextResponse.json({

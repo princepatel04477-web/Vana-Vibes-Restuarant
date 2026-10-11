@@ -7,6 +7,8 @@ import { KotPrintModal } from '@/features/orders/components/KotPrintModal';
 import { tablesApi } from '@/api/tables';
 import { QrCodePreview } from '@/components/ui/QrCodePreview';
 import { buildCustomerMenuUrl } from '@/lib/qr-url';
+import { useAuth } from '@/context/AuthContext';
+import { AddItemsModal } from './AddItemsModal';
 import {
   Users,
   Clock,
@@ -22,6 +24,9 @@ import {
   RefreshCw,
   Search,
   QrCode,
+  ShoppingBag,
+  RotateCcw,
+  AlertCircle,
 } from 'lucide-react';
 
 interface Props {
@@ -53,6 +58,13 @@ export function TableFloorPlan({
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [standeeModalTable, setStandeeModalTable] = useState<TableInfo | null>(null);
   const [currentTime, setCurrentTime] = useState<number>(0);
+  const [addItemsTable, setAddItemsTable] = useState<TableInfo | null>(null);
+  const [isResetOpen, setIsResetOpen] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const { role } = useAuth();
+  const isAdmin = role === 'ADMIN';
 
   useEffect(() => {
     setCurrentTime(Date.now());
@@ -204,6 +216,22 @@ export function TableFloorPlan({
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
+  const handleResetAllData = async () => {
+    try {
+      setIsResetting(true);
+      setResetError(null);
+      await tablesApi.resetAllData();
+      setIsResetOpen(false);
+      setResetConfirmText('');
+      setActiveTableModal(null);
+      onRefresh();
+    } catch (err) {
+      setResetError(err instanceof Error ? err.message : 'Failed to reset data. Please try again.');
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   // Get active order details for modal
   const selectedTableOrders = activeTableModal
     ? (tableOrdersMap.get(activeTableModal.id) || []).filter((o) => o.paymentStatus !== 'PAID')
@@ -280,6 +308,21 @@ export function TableFloorPlan({
             <ArrowRightLeft className="w-3.5 h-3.5" />
             <span>Transfer Table</span>
           </button>
+
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsResetOpen(true);
+                setResetConfirmText('');
+                setResetError(null);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 border border-red-200 hover:bg-red-100 text-red-700 text-xs font-bold transition-colors cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset All Data</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -443,7 +486,7 @@ export function TableFloorPlan({
                   className={`relative rounded-2xl border p-3 flex flex-col items-center justify-between min-h-[92px] sm:min-h-[104px] cursor-pointer transition-all hover:scale-105 hover:shadow-md select-none ${cardBg}`}
                 >
                   {/* Top: Table Label */}
-                  <div className="text-center w-full">
+                  <div className="text-center w-full pt-5">
                     <span className="text-xs sm:text-sm font-extrabold tracking-tight block">
                       Table {table.tableNumber}
                     </span>
@@ -577,6 +620,17 @@ export function TableFloorPlan({
                     <Printer className="w-4 h-4" />
                     <span>View QR Standee</span>
                   </button>
+
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setAddItemsTable(activeTableModal)}
+                      className="sm:col-span-2 flex items-center justify-center gap-2 p-3 rounded-2xl bg-brand-gold/15 border border-brand-gold/40 hover:bg-brand-gold/25 text-brand-green text-xs font-black transition-all cursor-pointer"
+                    >
+                      <ShoppingBag className="w-4 h-4" />
+                      <span>Add Items (Take Order)</span>
+                    </button>
+                  )}
                 </div>
 
                 {/* Copy QR Link */}
@@ -682,6 +736,17 @@ export function TableFloorPlan({
                     ))}
                   </div>
                 </div>
+
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setAddItemsTable(activeTableModal)}
+                    className="w-full flex items-center justify-center gap-2 p-3 rounded-2xl bg-brand-gold/15 border border-brand-gold/40 hover:bg-brand-gold/25 text-brand-green text-xs font-black transition-all cursor-pointer"
+                  >
+                    <ShoppingBag className="w-4 h-4" />
+                    <span>Add More Items</span>
+                  </button>
+                )}
 
                 {/* Table Management Action Buttons */}
                 <div className="grid grid-cols-2 gap-2 pt-2 border-t border-brand-beige-dark">
@@ -813,6 +878,83 @@ export function TableFloorPlan({
               <Printer className="w-4 h-4" />
               <span>Print Standee</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Admin: Manually Add Items to a Table */}
+      {addItemsTable && (
+        <AddItemsModal
+          table={addItemsTable}
+          onClose={() => setAddItemsTable(null)}
+          onAdded={() => {
+            setAddItemsTable(null);
+            setActiveTableModal(null);
+            onRefresh();
+          }}
+        />
+      )}
+
+      {/* Admin: Reset All Data Confirmation */}
+      {isResetOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
+          onClick={() => {
+            if (!isResetting) setIsResetOpen(false);
+          }}
+        >
+          <div
+            className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-brand-beige-dark space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-full bg-red-50 border border-red-200 text-red-600 flex items-center justify-center">
+                <RotateCcw className="w-4 h-4" />
+              </div>
+              <h4 className="font-black text-brand-green text-base">Reset All Data?</h4>
+            </div>
+            <p className="text-xs text-brand-green/75 leading-relaxed">
+              This permanently deletes <span className="font-bold">all orders, KOTs and bills</span>, frees every
+              table, and restores the default 18 tables. Menu items and staff accounts are kept. This cannot be
+              undone.
+            </p>
+            <div className="space-y-1">
+              <label htmlFor="reset-confirm-input" className="text-xs font-bold text-brand-green block">
+                Type <span className="font-mono text-red-600">RESET</span> to confirm
+              </label>
+              <input
+                id="reset-confirm-input"
+                type="text"
+                value={resetConfirmText}
+                onChange={(e) => setResetConfirmText(e.target.value)}
+                className="w-full px-3 py-2 text-xs font-mono font-bold bg-white border border-brand-beige-dark rounded-xl text-brand-green focus:outline-none focus:ring-2 focus:ring-red-100"
+                autoFocus
+              />
+            </div>
+            {resetError && (
+              <p className="text-xs font-semibold text-red-600 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{resetError}</span>
+              </p>
+            )}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={isResetting}
+                onClick={() => setIsResetOpen(false)}
+                className="px-4 py-2 rounded-xl bg-brand-beige hover:bg-brand-beige-dark text-brand-green text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isResetting || resetConfirmText !== 'RESET'}
+                onClick={handleResetAllData}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-black shadow-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {isResetting ? 'Resetting...' : 'Reset Everything'}
+              </button>
+            </div>
           </div>
         </div>
       )}
