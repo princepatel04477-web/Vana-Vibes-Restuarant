@@ -107,6 +107,9 @@ export interface CustomerDetails {
 export type OrderActivityStatus = 'ACTIVE' | 'INACTIVE';
 export type ActivityFilterOption = 'ACTIVE' | 'ALL' | 'INACTIVE';
 
+/** PERCENT: the bill discount is a % of the subtotal. AMOUNT: it is a flat ₹ amount. */
+export type DiscountType = 'PERCENT' | 'AMOUNT';
+
 export interface Order {
   id: string; // e.g., 'VV-1001'
   cafeId: string;
@@ -120,6 +123,7 @@ export interface Order {
   items: OrderItem[];
   subtotal: number;
   tax: number; // 5% GST
+  discountType?: DiscountType;
   discountPercentage?: number;
   discountAmount?: number;
   extraCharge?: number;
@@ -265,6 +269,7 @@ export interface BillData {
   cgst: number;
   sgst: number;
   taxAmount: number;
+  discountType?: DiscountType;
   discountPercentage?: number;
   discountAmount?: number;
   extraCharge?: number;

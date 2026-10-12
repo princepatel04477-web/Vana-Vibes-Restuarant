@@ -9,6 +9,7 @@ import { QrCodePreview } from '@/components/ui/QrCodePreview';
 import { buildCustomerMenuUrl } from '@/lib/qr-url';
 import { useAuth } from '@/context/AuthContext';
 import { AddItemsModal } from './AddItemsModal';
+import { TableSettlePanel } from './TableSettlePanel';
 import {
   Users,
   Clock,
@@ -63,6 +64,7 @@ export function TableFloorPlan({
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [isResetting, setIsResetting] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
+  const [selectedSessionToken, setSelectedSessionToken] = useState<string | null>(null);
   const { role } = useAuth();
   const isAdmin = role === 'ADMIN';
 
@@ -176,6 +178,7 @@ export function TableFloorPlan({
 
   const handleTableClick = (table: TableInfo) => {
     setActiveTableModal(table);
+    setSelectedSessionToken(null);
   };
 
   const handleToggleTableOccupied = async (table: TableInfo) => {
@@ -238,7 +241,24 @@ export function TableFloorPlan({
     : [];
 
   const activeBillOrder = selectedTableOrders[0];
-  const totalAmount = selectedTableOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+  const totalAmount = selectedTableOrders
+    .filter((o) => o.status !== 'CANCELLED')
+    .reduce((sum, o) => sum + (o.total || 0), 0);
+
+  // Each unpaid dining session is its own bill, oldest first (a billed table can seat new guests before paying)
+  const ordersBySession = new Map<string, Order[]>();
+  for (const o of selectedTableOrders) {
+    ordersBySession.set(o.sessionToken, [...(ordersBySession.get(o.sessionToken) || []), o]);
+  }
+  const tableSessions = Array.from(ordersBySession.entries())
+    .map(([token, sessionOrders]) => ({
+      token,
+      orders: sessionOrders,
+      startedAt: sessionOrders.reduce((min, o) => (o.createdAt < min ? o.createdAt : min), sessionOrders[0].createdAt),
+      isBilled: sessionOrders.some((o) => o.billGenerated || o.sessionStatus === 'BILL_GENERATED'),
+    }))
+    .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  const settleSession = tableSessions.find((sess) => sess.token === selectedSessionToken) || tableSessions[0];
 
   return (
     <div className="space-y-5">
@@ -748,20 +768,54 @@ export function TableFloorPlan({
                   </button>
                 )}
 
+                {/* Bill & Settle: discount, payment method and settlement for one dining session */}
+                {settleSession && (
+                  <div className="space-y-2">
+                    {tableSessions.length > 1 && (
+                      <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Choose bill">
+                        {tableSessions.map((sess, idx) => (
+                          <button
+                            key={sess.token}
+                            type="button"
+                            aria-pressed={sess.token === settleSession.token}
+                            onClick={() => setSelectedSessionToken(sess.token)}
+                            className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-colors cursor-pointer ${
+                              sess.token === settleSession.token
+                                ? 'bg-brand-green text-brand-beige border-brand-green'
+                                : 'bg-white text-brand-green border-brand-beige-dark hover:bg-brand-beige'
+                            }`}
+                          >
+                            Bill {idx + 1} • {sess.isBilled ? 'Payment pending' : 'Running'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <TableSettlePanel
+                      key={settleSession.token}
+                      sessionOrders={settleSession.orders}
+                      onSettled={() => {
+                        setActiveTableModal(null);
+                        onRefresh();
+                      }}
+                    />
+                  </div>
+                )}
+
                 {/* Table Management Action Buttons */}
                 <div className="grid grid-cols-2 gap-2 pt-2 border-t border-brand-beige-dark">
-                  {/* Settle Bill Button */}
+                  {/* View / Print Bill (also generates the bill when payment is collected later) */}
                   <button
                     type="button"
                     onClick={() => {
-                      if (activeBillOrder) {
-                        setBillModalOrderId(activeBillOrder.id);
+                      const billOrder = settleSession?.orders[0] || activeBillOrder;
+                      if (billOrder) {
+                        setBillModalOrderId(billOrder.id);
                       }
                     }}
                     className="flex items-center justify-center gap-1.5 p-3 rounded-2xl bg-brand-green text-brand-beige text-xs font-black hover:bg-brand-green-dark transition-all cursor-pointer shadow-xs"
                   >
                     <Receipt className="w-3.5 h-3.5" />
-                    <span>Generate / Settle Bill</span>
+                    <span>View / Print Bill</span>
                   </button>
 
                   {/* Print KOT */}

@@ -904,7 +904,7 @@ export function BillModal({ orderId, sessionId, onClose, onSettled }: Props) {
                 {/* Bill-level discount line */}
                 {hasDiscount && discountAmount > 0 ? (
                   <div className="flex justify-between text-brand-green font-bold pb-1">
-                    <span>Discount ({discountPercentage}%)</span>
+                    <span>{bill.discountType === 'AMOUNT' ? 'Discount' : `Discount (${discountPercentage}%)`}</span>
                     <span className="font-mono font-bold text-emerald-700">-₹{discountAmount.toFixed(2)}</span>
                   </div>
                 ) : null}
@@ -1068,6 +1068,14 @@ export function BillModal({ orderId, sessionId, onClose, onSettled }: Props) {
                     className="flex-1 py-2.5 rounded-xl bg-brand-green hover:bg-brand-green-hover text-brand-beige font-bold text-xs shadow-xs transition-all disabled:opacity-50 cursor-pointer"
                   >
                     {isSettling ? 'Settling...' : 'Settle Cash'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSettling}
+                    onClick={() => handleSettle('CARD')}
+                    className="flex-1 py-2.5 rounded-xl bg-sky-700 hover:bg-sky-800 text-white font-bold text-xs shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSettling ? 'Settling...' : 'Settle Card'}
                   </button>
                   <button
                     type="button"

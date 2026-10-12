@@ -1,4 +1,4 @@
-import { BillData, CafeDetails, CartItem, MenuItem, Order, OrderStatus, PaymentStatus, TableInfo, TableStatus } from '@/types/cafe';
+import { BillData, CafeDetails, CartItem, DiscountType, MenuItem, Order, OrderStatus, PaymentStatus, TableInfo, TableStatus } from '@/types/cafe';
 import { calculateBillBreakdown } from '@/utils/billing';
 import { buildCustomerMenuUrl } from './qr-url';
 import { StoreRepo, setInitialTablesFactory, withRead, withWrite } from './db/repo';
@@ -80,12 +80,59 @@ function billableSubtotal(sessionOrders: Order[]): number {
   return sessionOrders.filter((o) => o.status !== 'CANCELLED').reduce((sum, o) => sum + o.subtotal, 0);
 }
 
+/** Discount and extra charge applied when a bill is generated or settled. */
+export interface BillAdjustments {
+  discountValue?: number;
+  discountType?: DiscountType;
+  extraCharge?: number;
+}
+
+/** The discount value as entered: a % for PERCENT discounts, rupees for AMOUNT discounts. */
+function savedDiscountValue(order: Order): number {
+  return order.discountType === 'AMOUNT' ? order.discountAmount || 0 : order.discountPercentage || 0;
+}
+
+/**
+ * Marks every order of a session as billed with the given discount and extra charge.
+ * Fields left out of `adjustments` keep the values already saved on the session.
+ */
+function applyBill(sessionOrders: Order[], adjustments: BillAdjustments, now: string) {
+  const first = [...sessionOrders].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  const discountType = adjustments.discountType ?? first?.discountType ?? 'PERCENT';
+  const discountValue =
+    adjustments.discountValue ?? (first && (first.discountType ?? 'PERCENT') === discountType ? savedDiscountValue(first) : 0);
+  const breakdown = calculateBillBreakdown(
+    billableSubtotal(sessionOrders),
+    Number(discountValue) || 0,
+    Number(adjustments.extraCharge ?? first?.extraCharge ?? 0) || 0,
+    discountType
+  );
+
+  for (const o of sessionOrders) {
+    o.billGenerated = true;
+    o.sessionStatus = o.sessionStatus === 'CLOSED' ? 'CLOSED' : 'BILL_GENERATED';
+    o.discountType = breakdown.discountType;
+    o.discountPercentage = breakdown.discountPercentage;
+    o.discountAmount = breakdown.discountAmount;
+    o.extraCharge = breakdown.extraCharge;
+    o.amountAfterAdjustments = breakdown.amountAfterAdjustments;
+    o.roundOff = breakdown.roundOff;
+    o.billedAt = o.billedAt || now;
+    o.updatedAt = now;
+  }
+}
+
 /** The bill for a dining session, using the discount and extra charge saved on its orders. */
 function buildBill(order: Order, sessionOrders: Order[], menuItems: MenuItem[]): BillData {
   const sorted = [...sessionOrders].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const first = sorted[0] || order;
   const billable = sorted.filter((o) => o.status !== 'CANCELLED');
-  const breakdown = calculateBillBreakdown(billableSubtotal(sorted), first.discountPercentage || 0, first.extraCharge || 0);
+  const breakdown = calculateBillBreakdown(
+    billableSubtotal(sorted),
+    savedDiscountValue(first),
+    first.extraCharge || 0,
+    first.discountType || 'PERCENT'
+  );
   const tax = Math.round(breakdown.subtotal * CAFE_INFO.taxRate * 100) / 100;
   const cgst = Math.round((tax / 2) * 100) / 100;
   const sgst = Math.round((tax / 2) * 100) / 100;
@@ -134,6 +181,7 @@ function buildBill(order: Order, sessionOrders: Order[], menuItems: MenuItem[]):
     cgst,
     sgst,
     taxAmount: tax,
+    discountType: breakdown.discountType,
     discountPercentage: breakdown.discountPercentage,
     discountAmount: breakdown.discountAmount,
     extraCharge: breakdown.extraCharge,
@@ -359,13 +407,26 @@ export const CafeStore = {
     });
   },
 
-  async settlePayment(orderId: string, paymentMethod: string = 'CASH'): Promise<{ success: boolean; order?: Order; error?: string }> {
+  /**
+   * Takes payment for an order's whole dining session and closes it.
+   * With `adjustments`, the discount / extra charge are applied (and the bill generated) in the same step.
+   */
+  async settlePayment(
+    orderId: string,
+    paymentMethod: string = 'CASH',
+    adjustments?: BillAdjustments
+  ): Promise<{ success: boolean; order?: Order; error?: string; alreadySettled?: boolean }> {
     return withWrite(async (repo) => {
       const order = await repo.getOrder(orderId);
       if (!order) return { success: false, error: 'Order not found' };
 
       const sessionOrders = await loadSessionOrders(repo, order);
+      if (sessionOrders.some((o) => o.paymentStatus === 'PAID' || o.sessionStatus === 'CLOSED')) {
+        return { success: false, error: 'This bill has already been settled', alreadySettled: true };
+      }
+
       const now = new Date().toISOString();
+      if (adjustments) applyBill(sessionOrders, adjustments, now);
       for (const o of sessionOrders) {
         o.paymentStatus = 'PAID';
         o.sessionStatus = 'CLOSED';
@@ -402,32 +463,23 @@ export const CafeStore = {
     });
   },
 
-  /** Finalizes the bill for an order's whole dining session and frees the table. */
-  async generateBill(orderId: string, discountPercentage: number = 0, extraCharge: number = 0): Promise<BillData | null> {
+  /**
+   * Finalizes the bill for an order's whole dining session and frees the table.
+   * `discountValue` is a % by default, or rupees when `discountType` is 'AMOUNT'.
+   */
+  async generateBill(
+    orderId: string,
+    discountValue: number = 0,
+    extraCharge: number = 0,
+    discountType: DiscountType = 'PERCENT'
+  ): Promise<BillData | null> {
     return withWrite(async (repo) => {
       const order = await repo.getOrder(orderId);
       if (!order) return null;
 
       // Permanently close current order group for that dining session
       const sessionOrders = await loadSessionOrders(repo, order);
-      const breakdown = calculateBillBreakdown(
-        billableSubtotal(sessionOrders),
-        Number(discountPercentage) || 0,
-        Number(extraCharge) || 0
-      );
-
-      const now = new Date().toISOString();
-      for (const o of sessionOrders) {
-        o.billGenerated = true;
-        o.sessionStatus = o.sessionStatus === 'CLOSED' ? 'CLOSED' : 'BILL_GENERATED';
-        o.discountPercentage = breakdown.discountPercentage;
-        o.discountAmount = breakdown.discountAmount;
-        o.extraCharge = breakdown.extraCharge;
-        o.amountAfterAdjustments = breakdown.amountAfterAdjustments;
-        o.roundOff = breakdown.roundOff;
-        o.billedAt = o.billedAt || now;
-        o.updatedAt = now;
-      }
+      applyBill(sessionOrders, { discountValue, extraCharge, discountType }, new Date().toISOString());
       await repo.saveOrders(sessionOrders);
 
       // Bill generation permanently frees the physical table immediately!

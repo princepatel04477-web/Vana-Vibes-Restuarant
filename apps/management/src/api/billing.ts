@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { BillData } from '@/types/cafe';
+import { BillData, DiscountType } from '@/types/cafe';
 
 export interface InvoiceRecord {
   id: string;
@@ -15,6 +15,7 @@ export interface InvoiceRecord {
   sgstRate: number;
   sgstAmount: number;
   taxAmount: number;
+  discountType?: DiscountType;
   discountPercentage?: number;
   discountAmount?: number;
   extraCharge?: number;
@@ -26,6 +27,14 @@ export interface InvoiceRecord {
   settledAt?: string;
   createdAt: string;
   tableStatus?: string | null;
+}
+
+/** Discount and extra charge to apply while settling a bill. */
+export interface SettleAdjustments {
+  discountType: DiscountType;
+  /** A % for PERCENT discounts, rupees for AMOUNT discounts. */
+  discountValue: number;
+  extraCharge?: number;
 }
 
 export const billingApi = {
@@ -53,10 +62,20 @@ export const billingApi = {
     });
   },
 
-  settlePayment: async (orderId: string, paymentMethod: string): Promise<InvoiceRecord> => {
+  /** Takes payment and closes the order's dining session; with `adjustments`, the discount is applied in the same step. */
+  settlePayment: async (orderId: string, paymentMethod: string, adjustments?: SettleAdjustments): Promise<InvoiceRecord> => {
     return apiClient<InvoiceRecord>(`/billing/${orderId}/settle`, {
       method: 'POST',
-      body: JSON.stringify({ paymentMethod }),
+      body: JSON.stringify(
+        adjustments
+          ? {
+              paymentMethod,
+              discount_type: adjustments.discountType,
+              discount_value: adjustments.discountValue,
+              ...(adjustments.extraCharge !== undefined ? { extra_charge: adjustments.extraCharge } : {}),
+            }
+          : { paymentMethod }
+      ),
     });
   },
 

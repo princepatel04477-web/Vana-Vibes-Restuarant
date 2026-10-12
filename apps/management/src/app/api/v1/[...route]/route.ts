@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import QRCode from 'qrcode';
 import { ServerBackend, createToken } from '@/lib/server-backend';
-import { CafeStore } from '@/lib/cafe-store';
+import { BillAdjustments, CafeStore } from '@/lib/cafe-store';
 import { MenuError, MenuStore } from '@/lib/menu-store';
 import { TableStatus, OrderStatus, TableInfo, CartItem } from '@/types/cafe';
 import { ExportError, ExportRequest, generateExport, previewExport } from '@/lib/export/build-export';
@@ -57,11 +57,36 @@ async function resolveBillOrderId(route: string[]): Promise<string | undefined> 
   return route[1];
 }
 
+/**
+ * Discount / extra charge sent with a generate or settle request, or undefined when none were sent.
+ * A discount is a % unless `discount_type` is 'AMOUNT' (flat rupees, read from `discount_value` / `discount_amount`).
+ */
+function readBillAdjustments(body: Record<string, unknown>): BillAdjustments | undefined {
+  const pick = (...keys: string[]) => keys.map((k) => body[k]).find((v) => v !== undefined && v !== null && v !== '');
+  const discountType = pick('discount_type', 'discountType') === 'AMOUNT' ? 'AMOUNT' : 'PERCENT';
+  const discountValue =
+    discountType === 'AMOUNT'
+      ? pick('discount_value', 'discountValue', 'discount_amount', 'discountAmount')
+      : pick('discount_value', 'discountValue', 'discount_percentage', 'discountPercentage');
+  const extraCharge = pick('extra_charge', 'extraCharge');
+  if (discountValue === undefined && extraCharge === undefined && pick('discount_type', 'discountType') === undefined) {
+    return undefined;
+  }
+  return {
+    discountType,
+    discountValue: discountValue === undefined ? undefined : Number(discountValue) || 0,
+    extraCharge: extraCharge === undefined ? undefined : Number(extraCharge) || 0,
+  };
+}
+
 async function settleBill(orderId: string, body: Record<string, unknown>) {
   const method = typeof body.paymentMethod === 'string' ? body.paymentMethod : typeof body.payment_method === 'string' ? body.payment_method : 'CASH';
-  const settled = await CafeStore.settlePayment(orderId, method);
+  const settled = await CafeStore.settlePayment(orderId, method, readBillAdjustments(body));
   if (!settled.success) {
-    return NextResponse.json({ detail: settled.error || 'Order not found' }, { status: 404, headers: corsHeaders() });
+    return NextResponse.json(
+      { detail: settled.error || 'Order not found' },
+      { status: settled.alreadySettled ? 409 : 404, headers: corsHeaders() }
+    );
   }
   const bill = await CafeStore.getBill(orderId);
   const invoice = {
@@ -72,9 +97,11 @@ async function settleBill(orderId: string, body: Record<string, unknown>) {
     total: bill?.total ?? settled.order?.total ?? 0,
     subtotal: bill?.subtotal ?? settled.order?.subtotal ?? 0,
     taxAmount: bill?.taxAmount ?? settled.order?.tax ?? 0,
+    discountType: bill?.discountType || 'PERCENT',
     discountPercentage: bill?.discountPercentage || 0,
     discountAmount: bill?.discountAmount || 0,
     extraCharge: bill?.extraCharge || 0,
+    amountAfterAdjustments: bill?.amountAfterAdjustments,
     roundOff: bill?.roundOff || 0,
     cgstRate: 0,
     cgstAmount: 0,
@@ -246,7 +273,7 @@ export async function GET(
       discountPercentage: o.discountPercentage || 0,
       discountAmount: o.discountAmount || 0,
       total: o.total,
-      paymentMethod: 'CASH',
+      paymentMethod: o.paymentMethod || 'CASH',
       paymentStatus: o.paymentStatus,
       createdAt: o.createdAt,
     }));
@@ -481,9 +508,13 @@ export async function POST(
     }
     if (billAction === 'settle') return settleBill(orderId, body);
 
-    const discount = Number(body.discount_percentage ?? body.discountPercentage ?? 0);
-    const extraCharge = Number(body.extra_charge ?? body.extraCharge ?? 0);
-    const bill = await CafeStore.generateBill(orderId, discount, extraCharge);
+    const adjustments = readBillAdjustments(body);
+    const bill = await CafeStore.generateBill(
+      orderId,
+      adjustments?.discountValue ?? 0,
+      adjustments?.extraCharge ?? 0,
+      adjustments?.discountType
+    );
     if (!bill) {
       return NextResponse.json({ detail: 'No orders found for this bill' }, { status: 404, headers: corsHeaders() });
     }
